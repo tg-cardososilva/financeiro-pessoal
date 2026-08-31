@@ -1,58 +1,22 @@
-# Financeiro Pessoal
+# Financeiro Pessoal v2.2.0
 
-Aplicação web privada para consolidar contas bancárias, cartões, Mercado Pago, benefícios, pagamentos feitos por terceiros e compras com múltiplas formas de pagamento.
+Painel financeiro privado com Supabase Auth e dados isolados por usuário.
 
-## O que esta versão faz
+## Nesta versão
+- Nova área **Investimentos**.
+- Posições separando principal investido de valor atual.
+- Aportes registrados como transferência de patrimônio, sem virar despesa.
+- Resgates registrados como transferência, sem virar receita nova.
+- Rendimentos separados de aportes.
+- Metas patrimoniais e associação de posições a objetivos.
+- Distribuição da carteira por classe de ativo.
+- Atualização de valor com snapshots para histórico patrimonial.
+- Compatível com o fluxo existente de Inter, compras, benefícios e pagamentos por terceiros.
 
-- Login, cadastro e recuperação de senha com Supabase Auth.
-- Isolamento de dados por usuário com RLS.
-- Dashboard mensal com visão financeira real ou somente contas bancárias.
-- Separação entre entradas em dinheiro e benefícios.
-- Orçamento mensal editável.
-- Importação de extratos Inter em OFX/CSV, com deduplicação e revisão de categorias.
-- Fila de transações que precisam de revisão.
-- Edição de transações sem apagar a descrição original do extrato.
-- Nome amigável, categoria, tags, observação e tipo de movimentação.
-- Criação de regras automáticas de categorização a partir de uma correção.
-- Agrupamento de múltiplos pagamentos em uma única compra.
-- Sugestões de agrupamento por estabelecimento/data.
-- Divisão de compras por categorias sem alterar o total financeiro.
-- Detalhamento de compras opcional nos gráficos.
-- Upload privado de nota fiscal/PDF/XML/imagem ligado à compra.
-- Conta separada para Cartão Alimentação / benefício.
-- Registro de gastos pagos por terceiros, como aluguel e condomínio.
-- Cadastro e edição de contas adicionais.
+## Publicação
+Substitua no GitHub Pages:
+- `index.html`
+- `app.js`
+- `styles.css`
 
-## Arquivos do site
-
-- `index.html` — estrutura da aplicação.
-- `styles.css` — design responsivo.
-- `app.js` — autenticação, dashboard, edição, importação e integração Supabase.
-
-## Publicação no GitHub Pages
-
-O repositório deve publicar a branch `main` a partir de `/ (root)`.
-
-Para atualizar uma versão já publicada, substitua no repositório os arquivos `index.html`, `styles.css` e `app.js` pelos arquivos desta pasta e faça um novo commit. O GitHub Pages republica automaticamente.
-
-## Segurança
-
-O frontend usa somente a chave `publishable` do Supabase. O acesso aos dados é controlado pelas políticas RLS do banco. Nunca coloque uma chave `service_role` ou `sb_secret_...` neste repositório.
-
-## Atualização v2.1 — importação simplificada
-
-A tela **Importar extrato** agora foi dividida em três caminhos claros:
-
-- **Banco ou cartão:** envie OFX/CSV e o painel identifica automaticamente Inter Conta Corrente ou Inter Cartão pelos dados internos do arquivo. A correção manual só aparece quando necessário.
-- **Cartão Alimentação:** atalhos dedicados para registrar compra ou crédito do benefício sem misturar benefício com renda bancária.
-- **Pagamento por terceiro:** fluxo direto para despesas como aluguel pago antes do dinheiro passar pelas contas bancárias.
-
-A identificação automática foi validada com os três arquivos reais de agosto já usados no projeto: Inter OFX, Inter Conta Corrente CSV e Inter Cartão CSV.
-
-## v2.1.2 — Importação em lote
-
-- Seleção de vários OFX/CSV de uma vez.
-- Identificação automática por arquivo.
-- Deduplicação contra o histórico e também entre arquivos do mesmo lote.
-- Falhas isoladas: um arquivo desconhecido não bloqueia os demais.
-- Prévia consolidada e confirmação única.
+Depois aguarde a publicação e faça `Ctrl + F5`.

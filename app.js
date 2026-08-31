@@ -51,7 +51,11 @@ const state = {
   import: null,
   selectionMode: false,
   selectedTx: new Set(),
-  dismissedSuggestions: new Set()
+  dismissedSuggestions: new Set(),
+  investmentPositions: [],
+  investmentGoals: [],
+  investmentMovements: [],
+  investmentSnapshots: []
 }
 
 function esc(v = '') {
@@ -230,7 +234,7 @@ function navigate(view) {
   state.selectedTx.clear()
   document.querySelectorAll('.nav-button').forEach((b) => b.classList.toggle('active', b.dataset.view === view))
   $('pageTitle').textContent = {
-    overview: 'Visão geral', transactions: 'Transações', purchases: 'Compras', import: 'Importar extrato', accounts: 'Contas'
+    overview: 'Visão geral', transactions: 'Transações', purchases: 'Compras', investments: 'Investimentos', import: 'Importar extrato', accounts: 'Contas'
   }[view]
   toggleSidebar(false)
   renderMain()
@@ -245,16 +249,20 @@ async function loadData() {
     const user = state.session.user
     const { start, end } = monthRange()
     const monthDate = `${state.month}-01`
-    const [acc, cat, rules, tx, pur, profile, budget] = await Promise.all([
+    const [acc, cat, rules, tx, pur, profile, budget, invPos, invGoals, invMoves, invSnaps] = await Promise.all([
       supabase.from('accounts').select('*').eq('active', true).order('created_at'),
       supabase.from('categories').select('*').eq('active', true).order('group_name').order('name'),
       supabase.from('categorization_rules').select('*').eq('active', true).order('priority'),
       supabase.from('transactions').select('*, accounts(name,institution,account_type), categories(name,group_name,kind)').gte('transaction_date', start).lt('transaction_date', end).order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(1600),
       supabase.from('purchases').select('*').gte('purchase_date', start).lt('purchase_date', end).neq('status', 'ignored').order('purchase_date', { ascending: false }),
       supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
-      supabase.from('budgets').select('*').eq('month', monthDate).is('category_id', null).maybeSingle()
+      supabase.from('budgets').select('*').eq('month', monthDate).is('category_id', null).maybeSingle(),
+      supabase.from('investment_positions').select('*, accounts(name,institution,account_type), investment_goals(name,target_amount,target_date)').eq('active', true).order('current_value', { ascending: false }),
+      supabase.from('investment_goals').select('*').eq('active', true).order('priority').order('created_at'),
+      supabase.from('investment_movements').select('*, investment_positions(name), accounts(name,institution)').gte('movement_date', start).lt('movement_date', end).order('movement_date', { ascending: false }).order('created_at', { ascending: false }),
+      supabase.from('investment_snapshots').select('*').order('snapshot_date', { ascending: false }).limit(400)
     ])
-    const err = acc.error || cat.error || rules.error || tx.error || pur.error || profile.error || budget.error
+    const err = acc.error || cat.error || rules.error || tx.error || pur.error || profile.error || budget.error || invPos.error || invGoals.error || invMoves.error || invSnaps.error
     if (err) throw err
     state.accounts = acc.data || []
     state.categories = cat.data || []
@@ -264,6 +272,10 @@ async function loadData() {
     state.profile = profile.data || null
     state.preferences = { use_purchase_details: false, ...(state.profile?.preferences || {}) }
     state.budget = budget.data || null
+    state.investmentPositions = invPos.data || []
+    state.investmentGoals = invGoals.data || []
+    state.investmentMovements = invMoves.data || []
+    state.investmentSnapshots = invSnaps.data || []
 
     const pids = state.purchases.map((p) => p.id)
     if (pids.length) {
@@ -313,6 +325,7 @@ function renderMain() {
   if (state.view === 'overview') renderOverview()
   if (state.view === 'transactions') renderTransactions()
   if (state.view === 'purchases') renderPurchases()
+  if (state.view === 'investments') renderInvestments()
   if (state.view === 'import') renderImport()
   if (state.view === 'accounts') renderAccounts()
 }
@@ -1284,6 +1297,127 @@ async function confirmBatchImport() {
     imp.message = humanError(err)
     renderImport()
   } finally { setBusy(btn, false) }
+}
+
+
+function assetTypeLabel(type) {
+  return ({ cash_reserve: 'Reserva', fixed_income: 'Renda fixa', fund: 'Fundos', stock: 'Ações', reit: 'FIIs', crypto: 'Cripto', pension: 'Previdência', other: 'Outros' })[type] || type
+}
+function movementTypeLabel(type) {
+  return ({ contribution: 'Aporte', withdrawal: 'Resgate', income: 'Rendimento', fee: 'Taxa', valuation_adjustment: 'Ajuste de valor', transfer_in: 'Transferência de entrada', transfer_out: 'Transferência de saída' })[type] || type
+}
+function investmentTotals() {
+  const current = state.investmentPositions.reduce((s, p) => s + num(p.current_value), 0)
+  const principal = state.investmentPositions.reduce((s, p) => s + num(p.invested_amount), 0)
+  const result = current - principal
+  const pct = principal > 0 ? (result / principal) * 100 : 0
+  const monthContribution = state.investmentMovements.filter((m) => m.movement_type === 'contribution').reduce((s, m) => s + num(m.amount), 0)
+  const monthWithdrawal = state.investmentMovements.filter((m) => m.movement_type === 'withdrawal').reduce((s, m) => s + num(m.amount), 0)
+  const monthIncome = state.investmentMovements.filter((m) => m.movement_type === 'income').reduce((s, m) => s + num(m.amount), 0)
+  return { current, principal, result, pct, monthContribution, monthWithdrawal, monthIncome }
+}
+function renderInvestments() {
+  const t = investmentTotals()
+  const byType = new Map()
+  state.investmentPositions.forEach((p) => byType.set(p.asset_type, (byType.get(p.asset_type) || 0) + num(p.current_value)))
+  const typeRows = [...byType.entries()].sort((a, b) => b[1] - a[1])
+  const maxType = Math.max(1, ...typeRows.map((x) => x[1]))
+  const goalRows = state.investmentGoals.map((g) => {
+    const value = state.investmentPositions.filter((p) => p.goal_id === g.id).reduce((s, p) => s + num(p.current_value), 0)
+    const target = num(g.target_amount)
+    return { ...g, value, pct: target > 0 ? Math.min(100, value / target * 100) : 0 }
+  })
+  const positions = state.investmentPositions
+  const monthName = monthFmt.format(parseDate(`${state.month}-01`))
+  $('mainArea').innerHTML = `<div class="content-stack investment-view">
+    <section class="section-header investment-hero-head"><div><span class="muted">Patrimônio e crescimento</span><h2>Investimentos</h2><p>Aportes não são gastos. Aqui você acompanha o que virou patrimônio e quanto esse patrimônio está rendendo.</p></div><div class="section-actions"><button id="investmentIncomeBtn" class="button" type="button">＋ Rendimento</button><button id="investmentWithdrawalBtn" class="button" type="button">↘ Resgate</button><button id="investmentContributionBtn" class="button primary" type="button">＋ Registrar aporte</button></div></section>
+    <section class="investment-kpi-grid">
+      <article class="investment-kpi featured"><span class="kpi-label">Patrimônio investido</span><strong>${money.format(t.current)}</strong><span class="kpi-foot">Valor atual das posições</span></article>
+      <article class="investment-kpi"><span class="kpi-label">Aportes em ${esc(monthName)}</span><strong>${money.format(t.monthContribution)}</strong><span class="kpi-foot">Resgates: ${money.format(t.monthWithdrawal)}</span></article>
+      <article class="investment-kpi"><span class="kpi-label">Rendimentos no mês</span><strong>${money.format(t.monthIncome)}</strong><span class="kpi-foot">Registrados como ganho, não como aporte</span></article>
+      <article class="investment-kpi ${t.result >= 0 ? 'positive' : 'negative'}"><span class="kpi-label">Resultado acumulado</span><strong>${money.format(t.result)}</strong><span class="kpi-foot">${t.pct.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}% sobre o principal</span></article>
+    </section>
+    <section class="investment-layout">
+      <div class="panel investment-portfolio-panel"><div class="panel-head"><div><span class="eyebrow">CARTEIRA</span><h3>Posições</h3><p>Atualize o valor periodicamente para acompanhar a evolução patrimonial.</p></div><button id="newPositionBtn" class="button small" type="button">＋ Nova posição</button></div>
+        ${positions.length ? `<div class="investment-position-list">${positions.map((p) => {
+          const value = num(p.current_value), principal = num(p.invested_amount), r = value - principal, rp = principal > 0 ? r/principal*100 : 0
+          return `<button type="button" class="investment-position-row" data-position="${p.id}"><div class="position-icon">${assetTypeLabel(p.asset_type).slice(0,1)}</div><div class="position-main"><strong>${esc(p.name)}</strong><span>${esc(p.accounts?.name || accountById(p.account_id)?.name || 'Investimentos')} · ${esc(assetTypeLabel(p.asset_type))}${p.benchmark ? ` · ${esc(p.benchmark)}` : ''}</span></div><div class="position-numbers"><strong>${money.format(value)}</strong><span class="${r >= 0 ? 'positive-text' : 'negative-text'}">${r >= 0 ? '+' : ''}${money.format(r)} · ${rp.toLocaleString('pt-BR',{maximumFractionDigits:2})}%</span></div></button>`
+        }).join('')}</div>` : `<div class="empty-state compact"><strong>Nenhuma posição cadastrada</strong><span>Cadastre uma reserva, CDB, fundo, ação ou outro investimento para começar a acompanhar o patrimônio.</span><button id="emptyNewPosition" class="button primary" type="button">Criar primeira posição</button></div>`}
+      </div>
+      <div class="panel"><div class="panel-head"><div><span class="eyebrow">ALOCAÇÃO</span><h3>Distribuição</h3><p>Quanto do seu patrimônio está em cada tipo de ativo.</p></div></div>${typeRows.length ? `<div class="allocation-list">${typeRows.map(([type, value]) => `<div class="allocation-row"><div><span>${esc(assetTypeLabel(type))}</span><strong>${money.format(value)}</strong></div><div class="progress-track"><span style="width:${Math.max(4,value/maxType*100)}%"></span></div></div>`).join('')}</div>` : '<div class="empty-state compact"><span>A distribuição aparece quando você cadastrar posições.</span></div>'}</div>
+    </section>
+    <section class="investment-layout goals-layout">
+      <div class="panel"><div class="panel-head"><div><span class="eyebrow">OBJETIVOS</span><h3>Metas patrimoniais</h3><p>Associe posições a objetivos como reserva de emergência, viagem ou aposentadoria.</p></div><button id="newGoalBtn" class="button small" type="button">＋ Nova meta</button></div>${goalRows.length ? `<div class="goal-list">${goalRows.map((g) => `<button type="button" class="goal-card" data-goal="${g.id}"><div class="goal-top"><div><strong>${esc(g.name)}</strong><span>${g.target_date ? `Até ${fullDateFmt.format(parseDate(g.target_date))}` : 'Sem prazo definido'}</span></div><strong>${g.pct.toLocaleString('pt-BR',{maximumFractionDigits:0})}%</strong></div><div class="goal-values"><span>${money.format(g.value)}</span><span>Meta ${money.format(num(g.target_amount))}</span></div><div class="progress-track goal-progress"><span style="width:${g.pct}%"></span></div></button>`).join('')}</div>` : '<div class="empty-state compact"><span>Crie uma meta para saber se os seus aportes estão levando você ao objetivo desejado.</span></div>'}</div>
+      <div class="panel"><div class="panel-head"><div><span class="eyebrow">MOVIMENTAÇÕES</span><h3>${esc(monthName)}</h3><p>Aportes, resgates e rendimentos registrados no mês.</p></div></div>${state.investmentMovements.length ? `<div class="investment-move-list">${state.investmentMovements.slice(0,10).map((m) => `<div class="investment-move-row"><div><strong>${esc(m.investment_positions?.name || m.accounts?.name || 'Investimento')}</strong><span>${esc(movementTypeLabel(m.movement_type))} · ${dateFmt.format(parseDate(m.movement_date))}</span></div><strong class="${m.movement_type === 'withdrawal' || m.movement_type === 'fee' ? 'negative-text' : ''}">${m.movement_type === 'withdrawal' || m.movement_type === 'fee' ? '− ' : '+ '}${money.format(num(m.amount))}</strong></div>`).join('')}</div>` : '<div class="empty-state compact"><span>Nenhuma movimentação de investimento neste mês.</span></div>'}</div>
+    </section>
+  </div>`
+  $('investmentContributionBtn')?.addEventListener('click', openInvestmentContributionModal)
+  $('investmentWithdrawalBtn')?.addEventListener('click', openInvestmentWithdrawalModal)
+  $('investmentIncomeBtn')?.addEventListener('click', openInvestmentIncomeModal)
+  $('newPositionBtn')?.addEventListener('click', () => openInvestmentPositionModal())
+  $('emptyNewPosition')?.addEventListener('click', () => openInvestmentPositionModal())
+  $('newGoalBtn')?.addEventListener('click', () => openInvestmentGoalModal())
+  document.querySelectorAll('[data-position]').forEach((b) => b.addEventListener('click', () => openInvestmentPositionModal(b.dataset.position)))
+  document.querySelectorAll('[data-goal]').forEach((b) => b.addEventListener('click', () => openInvestmentGoalModal(b.dataset.goal)))
+}
+function investmentAccountOptions(selected='') {
+  const accounts = state.accounts.filter((a) => ['investment','savings'].includes(a.account_type))
+  return accounts.map((a) => `<option value="${a.id}" ${a.id===selected?'selected':''}>${esc(a.name)}</option>`).join('')
+}
+function sourceAccountOptions(selected='') {
+  return state.accounts.filter((a) => !['credit_card','benefit','virtual'].includes(a.account_type)).map((a) => `<option value="${a.id}" ${a.id===selected?'selected':''}>${esc(a.name)}</option>`).join('')
+}
+function goalOptions(selected='') {
+  return `<option value="">Sem meta vinculada</option>${state.investmentGoals.map((g)=>`<option value="${g.id}" ${g.id===selected?'selected':''}>${esc(g.name)}</option>`).join('')}`
+}
+function openInvestmentPositionModal(id=null) {
+  const p = id ? state.investmentPositions.find((x)=>x.id===id) : null
+  const modal = $('modalHost')
+  modal.innerHTML = `<div class="modal-backdrop"><form id="investmentPositionForm" class="modal"><div class="modal-head"><div><span class="eyebrow">${p?'EDITAR POSIÇÃO':'NOVA POSIÇÃO'}</span><h2>${p?esc(p.name):'Cadastrar investimento'}</h2><div class="modal-sub">O principal investido e o valor atual ficam separados para calcular o resultado real.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label full-span">Nome<input id="invName" value="${esc(p?.name||'')}" placeholder="Ex.: CDB liquidez diária" required></label><label class="field-label">Conta / instituição<select id="invAccount">${investmentAccountOptions(p?.account_id||'')}</select></label><label class="field-label">Tipo<select id="invType"><option value="cash_reserve">Reserva</option><option value="fixed_income">Renda fixa</option><option value="fund">Fundo</option><option value="stock">Ação</option><option value="reit">FII</option><option value="crypto">Cripto</option><option value="pension">Previdência</option><option value="other">Outro</option></select></label><label class="field-label">Principal investido<input id="invPrincipal" inputmode="decimal" value="${p?num(p.invested_amount).toLocaleString('pt-BR',{minimumFractionDigits:2}):''}" placeholder="0,00"></label><label class="field-label">Valor atual<input id="invCurrent" inputmode="decimal" value="${p?num(p.current_value).toLocaleString('pt-BR',{minimumFractionDigits:2}):''}" placeholder="0,00"></label><label class="field-label">Benchmark<input id="invBenchmark" value="${esc(p?.benchmark||'')}" placeholder="Ex.: CDI, IPCA + 6%"></label><label class="field-label">Liquidez<input id="invLiquidity" value="${esc(p?.liquidity_label||'')}" placeholder="Ex.: D+0"></label><label class="field-label">Vencimento<input id="invMaturity" type="date" value="${esc(p?.maturity_date||'')}"></label><label class="field-label">Meta<select id="invGoal">${goalOptions(p?.goal_id||'')}</select></label></div><div id="invPositionMessage" class="form-message hidden"></div><div class="modal-actions"><span>${p?'<button id="updateValuation" class="text-button" type="button">Atualizar valor e histórico</button>':''}</span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveInvPosition" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
+  $('invType').value=p?.asset_type||'fixed_income'
+  const close=()=>{modal.innerHTML=''}
+  $('closeModal').addEventListener('click',close); $('cancelModal').addEventListener('click',close)
+  $('updateValuation')?.addEventListener('click',()=>{close();openInvestmentValuationModal(p.id)})
+  $('investmentPositionForm').addEventListener('submit',async(e)=>{e.preventDefault();const btn=$('saveInvPosition');setBusy(btn,true,'Salvando');try{const principal=parseMoneyInput($('invPrincipal').value||'0');const current=parseMoneyInput($('invCurrent').value||'0');if(!Number.isFinite(principal)||principal<0||!Number.isFinite(current)||current<0)throw new Error('Informe valores válidos.');const payload={name:$('invName').value.trim(),account_id:$('invAccount').value,asset_type:$('invType').value,invested_amount:principal,current_value:current,benchmark:$('invBenchmark').value.trim()||null,liquidity_label:$('invLiquidity').value.trim()||null,maturity_date:$('invMaturity').value||null,goal_id:$('invGoal').value||null};if(!payload.name||!payload.account_id)throw new Error('Informe nome e conta do investimento.');let error;if(p)({error}=await supabase.from('investment_positions').update(payload).eq('id',p.id));else({error}=await supabase.from('investment_positions').insert({...payload,user_id:state.session.user.id,active:true}));if(error)throw error;close();toast(p?'Posição atualizada.':'Posição criada.','success');await loadData()}catch(err){showInfo('invPositionMessage',humanError(err));setBusy(btn,false)}})
+}
+function openInvestmentGoalModal(id=null) {
+  const g=id?state.investmentGoals.find((x)=>x.id===id):null
+  const modal=$('modalHost')
+  modal.innerHTML=`<div class="modal-backdrop"><form id="investmentGoalForm" class="modal"><div class="modal-head"><div><span class="eyebrow">${g?'EDITAR META':'NOVA META'}</span><h2>${g?esc(g.name):'Criar objetivo patrimonial'}</h2></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label full-span">Nome da meta<input id="goalName" value="${esc(g?.name||'')}" placeholder="Ex.: Reserva de emergência" required></label><label class="field-label">Valor alvo<input id="goalAmount" inputmode="decimal" value="${g?num(g.target_amount).toLocaleString('pt-BR',{minimumFractionDigits:2}):''}" placeholder="0,00" required></label><label class="field-label">Prazo<input id="goalDate" type="date" value="${esc(g?.target_date||'')}"></label><label class="field-label full-span">Observação<textarea id="goalNotes" placeholder="Opcional">${esc(g?.notes||'')}</textarea></label></div><div id="goalMessage" class="form-message hidden"></div><div class="modal-actions"><span></span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveGoal" class="button primary" type="submit">✓ Salvar meta</button></div></div></form></div>`
+  const close=()=>{modal.innerHTML=''};$('closeModal').addEventListener('click',close);$('cancelModal').addEventListener('click',close)
+  $('investmentGoalForm').addEventListener('submit',async(e)=>{e.preventDefault();const btn=$('saveGoal');setBusy(btn,true,'Salvando');try{const amount=parseMoneyInput($('goalAmount').value);if(!Number.isFinite(amount)||amount<=0)throw new Error('Informe um valor alvo válido.');const payload={name:$('goalName').value.trim(),target_amount:amount,target_date:$('goalDate').value||null,notes:$('goalNotes').value.trim()||null};if(!payload.name)throw new Error('Informe o nome da meta.');let error;if(g)({error}=await supabase.from('investment_goals').update(payload).eq('id',g.id));else({error}=await supabase.from('investment_goals').insert({...payload,user_id:state.session.user.id,active:true}));if(error)throw error;close();toast('Meta salva.','success');await loadData()}catch(err){showInfo('goalMessage',humanError(err));setBusy(btn,false)}})
+}
+function openInvestmentContributionModal() {
+  const modal=$('modalHost')
+  const positions=state.investmentPositions
+  modal.innerHTML=`<div class="modal-backdrop"><form id="investmentContributionForm" class="modal"><div class="modal-head"><div><span class="eyebrow">APORTE</span><h2>Transformar dinheiro em patrimônio</h2><div class="modal-sub">A saída da conta bancária não será tratada como gasto.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label">Data<input id="contributionDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label><label class="field-label">Valor<input id="contributionAmount" inputmode="decimal" placeholder="0,00"></label><label class="field-label">Sai de<select id="contributionSource">${sourceAccountOptions()}</select></label><label class="field-label">Vai para<select id="contributionDestination">${investmentAccountOptions()}</select></label><label class="field-label full-span">Posição<select id="contributionPosition"><option value="">Aporte sem posição específica</option>${positions.map((p)=>`<option value="${p.id}" data-account="${p.account_id}">${esc(p.name)}</option>`).join('')}</select></label><label class="field-label full-span">Observação<textarea id="contributionNotes" placeholder="Opcional"></textarea></label></div><div id="contributionMessage" class="form-message hidden"></div><div class="modal-actions"><span class="muted">O patrimônio total não muda no momento do aporte.</span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveContribution" class="button primary" type="submit">✓ Registrar aporte</button></div></div></form></div>`
+  const close=()=>{modal.innerHTML=''};$('closeModal').addEventListener('click',close);$('cancelModal').addEventListener('click',close)
+  $('contributionPosition').addEventListener('change',()=>{const opt=$('contributionPosition').selectedOptions[0];if(opt?.dataset.account)$('contributionDestination').value=opt.dataset.account})
+  $('investmentContributionForm').addEventListener('submit',async(e)=>{e.preventDefault();const btn=$('saveContribution');setBusy(btn,true,'Registrando');try{const amount=parseMoneyInput($('contributionAmount').value);if(!Number.isFinite(amount)||amount<=0)throw new Error('Informe um valor válido.');const {error}=await supabase.rpc('record_investment_contribution',{p_date:$('contributionDate').value,p_amount:amount,p_source_account_id:$('contributionSource').value,p_investment_account_id:$('contributionDestination').value,p_position_id:$('contributionPosition').value||null,p_notes:$('contributionNotes').value.trim()||null});if(error)throw error;close();toast('Aporte registrado sem virar despesa.','success');await loadData()}catch(err){showInfo('contributionMessage',humanError(err));setBusy(btn,false)}})
+}
+function openInvestmentWithdrawalModal() {
+  if(!state.investmentPositions.length){toast('Cadastre uma posição antes de registrar resgate.');openInvestmentPositionModal();return}
+  const modal=$('modalHost')
+  const first=state.investmentPositions[0]
+  modal.innerHTML=`<div class="modal-backdrop"><form id="investmentWithdrawalForm" class="modal"><div class="modal-head"><div><span class="eyebrow">RESGATE</span><h2>Trazer investimento de volta para a conta</h2><div class="modal-sub">O valor recebido na conta é transferência de patrimônio, não uma nova receita.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label">Data<input id="withdrawalDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label><label class="field-label">Valor<input id="withdrawalAmount" inputmode="decimal" placeholder="0,00"></label><label class="field-label full-span">Posição<select id="withdrawalPosition">${state.investmentPositions.map((p)=>`<option value="${p.id}" data-account="${p.account_id}">${esc(p.name)} · ${money.format(num(p.current_value))}</option>`).join('')}</select></label><label class="field-label">Sai de<select id="withdrawalSource">${investmentAccountOptions(first?.account_id||'')}</select></label><label class="field-label">Vai para<select id="withdrawalDestination">${sourceAccountOptions()}</select></label><label class="field-label full-span">Observação<textarea id="withdrawalNotes" placeholder="Opcional"></textarea></label></div><div id="withdrawalMessage" class="form-message hidden"></div><div class="modal-actions"><span class="muted">O resgate reduz a posição e aumenta a conta de destino.</span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveWithdrawal" class="button primary" type="submit">✓ Registrar resgate</button></div></div></form></div>`
+  const close=()=>{modal.innerHTML=''};$('closeModal').addEventListener('click',close);$('cancelModal').addEventListener('click',close)
+  $('withdrawalPosition').addEventListener('change',()=>{const opt=$('withdrawalPosition').selectedOptions[0];if(opt?.dataset.account)$('withdrawalSource').value=opt.dataset.account})
+  $('investmentWithdrawalForm').addEventListener('submit',async(e)=>{e.preventDefault();const btn=$('saveWithdrawal');setBusy(btn,true,'Registrando');try{const amount=parseMoneyInput($('withdrawalAmount').value);if(!Number.isFinite(amount)||amount<=0)throw new Error('Informe um valor válido.');const pos=state.investmentPositions.find((p)=>p.id===$('withdrawalPosition').value);if(amount>num(pos.current_value))throw new Error('O resgate não pode ser maior que o valor atual da posição.');const {error}=await supabase.rpc('record_investment_withdrawal',{p_date:$('withdrawalDate').value,p_amount:amount,p_investment_account_id:$('withdrawalSource').value,p_destination_account_id:$('withdrawalDestination').value,p_position_id:pos.id,p_notes:$('withdrawalNotes').value.trim()||null});if(error)throw error;close();toast('Resgate registrado como transferência de patrimônio.','success');await loadData()}catch(err){showInfo('withdrawalMessage',humanError(err));setBusy(btn,false)}})
+}
+
+function openInvestmentIncomeModal() {
+  if(!state.investmentPositions.length){toast('Cadastre uma posição antes de registrar rendimento.');openInvestmentPositionModal();return}
+  const modal=$('modalHost')
+  modal.innerHTML=`<div class="modal-backdrop"><form id="investmentIncomeForm" class="modal"><div class="modal-head"><div><span class="eyebrow">RENDIMENTO</span><h2>Registrar ganho do investimento</h2><div class="modal-sub">Use para rendimentos que ficaram aplicados. Se o valor caiu na conta bancária, registre também a entrada na conta.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label">Data<input id="incomeDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label><label class="field-label">Valor<input id="incomeAmount" inputmode="decimal" placeholder="0,00"></label><label class="field-label full-span">Posição<select id="incomePosition">${state.investmentPositions.map((p)=>`<option value="${p.id}" data-account="${p.account_id}">${esc(p.name)}</option>`).join('')}</select></label><label class="field-label full-span">Observação<textarea id="incomeNotes" placeholder="Opcional"></textarea></label></div><div id="incomeMessage" class="form-message hidden"></div><div class="modal-actions"><span></span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveIncome" class="button primary" type="submit">✓ Registrar rendimento</button></div></div></form></div>`
+  const close=()=>{modal.innerHTML=''};$('closeModal').addEventListener('click',close);$('cancelModal').addEventListener('click',close)
+  $('investmentIncomeForm').addEventListener('submit',async(e)=>{e.preventDefault();const btn=$('saveIncome');setBusy(btn,true,'Registrando');try{const amount=parseMoneyInput($('incomeAmount').value);if(!Number.isFinite(amount)||amount<=0)throw new Error('Informe um valor válido.');const pos=state.investmentPositions.find((p)=>p.id===$('incomePosition').value);const {error}=await supabase.rpc('record_investment_income',{p_date:$('incomeDate').value,p_amount:amount,p_account_id:pos.account_id,p_position_id:pos.id,p_notes:$('incomeNotes').value.trim()||null});if(error)throw error;close();toast('Rendimento registrado.','success');await loadData()}catch(err){showInfo('incomeMessage',humanError(err));setBusy(btn,false)}})
+}
+function openInvestmentValuationModal(positionId) {
+  const p=state.investmentPositions.find((x)=>x.id===positionId);if(!p)return
+  const modal=$('modalHost')
+  modal.innerHTML=`<div class="modal-backdrop"><form id="valuationForm" class="modal"><div class="modal-head"><div><span class="eyebrow">ATUALIZAR POSIÇÃO</span><h2>${esc(p.name)}</h2><div class="modal-sub">Salvamos um retrato para construir a evolução do patrimônio ao longo do tempo.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label">Data<input id="valuationDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label><label class="field-label">Valor atual<input id="valuationValue" inputmode="decimal" value="${num(p.current_value).toLocaleString('pt-BR',{minimumFractionDigits:2})}"></label></div><div id="valuationMessage" class="form-message hidden"></div><div class="modal-actions"><span>Principal registrado: ${money.format(num(p.invested_amount))}</span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveValuation" class="button primary" type="submit">✓ Atualizar</button></div></div></form></div>`
+  const close=()=>{modal.innerHTML=''};$('closeModal').addEventListener('click',close);$('cancelModal').addEventListener('click',close)
+  $('valuationForm').addEventListener('submit',async(e)=>{e.preventDefault();const btn=$('saveValuation');setBusy(btn,true,'Atualizando');try{const value=parseMoneyInput($('valuationValue').value);if(!Number.isFinite(value)||value<0)throw new Error('Informe um valor válido.');const date=$('valuationDate').value;const [{error:e1},{error:e2}]=await Promise.all([supabase.from('investment_positions').update({current_value:value}).eq('id',p.id),supabase.from('investment_snapshots').upsert({user_id:state.session.user.id,position_id:p.id,snapshot_date:date,invested_principal:num(p.invested_amount),market_value:value},{onConflict:'position_id,snapshot_date'})]);if(e1||e2)throw e1||e2;close();toast('Valor da posição atualizado.','success');await loadData()}catch(err){showInfo('valuationMessage',humanError(err));setBusy(btn,false)}})
 }
 
 function renderAccounts() {
