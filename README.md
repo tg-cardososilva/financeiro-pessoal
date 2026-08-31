@@ -20,3 +20,11 @@ Substitua no GitHub Pages:
 - `styles.css`
 
 Depois aguarde a publicação e faça `Ctrl + F5`.
+
+## v2.2.1 — Comprovantes e prints
+- Nova entrada **Comprovante ou print** em Importar extrato.
+- Aceita PDF, JPG e PNG.
+- PDFs textuais são lidos no navegador; imagens usam OCR local no navegador e sempre passam por conferência.
+- Detecta fluxos de Mercado Pago Cofrinho, pagamento por terceiro e cartão alimentação.
+- Cofrinho: reservar = aporte, retirar = resgate, rendimento = rendimento financeiro.
+- Os arquivos só são enviados ao bucket privado do Supabase depois da confirmação.
