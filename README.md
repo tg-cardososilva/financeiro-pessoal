@@ -43,3 +43,10 @@ Depois aguarde a publicação e faça `Ctrl + F5`.
 - Adiciona exclusão de lançamentos não agrupados.
 - Importações por imagem entram como "Precisa revisar" até validação.
 - Crédito do benefício usa a categoria Benefício alimentação.
+
+
+## v2.2.5
+- Reconhecimento automático de extrato Mercado Pago em PDF.
+- Uso do ID da operação para deduplicação.
+- Pareamento de Pix recebido no Mercado Pago com saída correspondente do Inter quando houver correspondência única.
+- Reserva/resgate do Cofrinho reconciliados com movimentações de investimento já existentes.
