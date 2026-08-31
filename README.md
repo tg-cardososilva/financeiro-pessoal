@@ -50,3 +50,9 @@ Depois aguarde a publicação e faça `Ctrl + F5`.
 - Uso do ID da operação para deduplicação.
 - Pareamento de Pix recebido no Mercado Pago com saída correspondente do Inter quando houver correspondência única.
 - Reserva/resgate do Cofrinho reconciliados com movimentações de investimento já existentes.
+
+
+## v2.2.7
+- Drill-down nos KPIs, categorias e contas do dashboard.
+- Filtros clicáveis em investimentos.
+- Preserva a conta original ao editar transações de contas encerradas.

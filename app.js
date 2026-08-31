@@ -56,7 +56,8 @@ const state = {
   investmentGoals: [],
   investmentMovements: [],
   investmentSnapshots: [],
-  transactionDrilldown: null
+  transactionDrilldown: null,
+  investmentMovementFilter: 'all'
 }
 
 function esc(v = '') {
@@ -391,7 +392,9 @@ function renderOverview() {
   const tx = visibleTransactions()
   const totals = calcTotals(tx)
   const resources = totals.cashIncome + totals.benefits + totals.thirdPartyIncome
-  const result = resources - totals.expense - totals.invest
+  const invMonth = investmentTotals()
+  const netInvestment = invMonth.monthContribution - invMonth.monthWithdrawal
+  const result = resources - totals.expense - netInvestment
   const cats = categorySpend(tx)
   const series = dailySeries(tx)
   const label = monthFmt.format(parseDate(`${state.month}-01`))
@@ -409,10 +412,10 @@ function renderOverview() {
     </section>
 
     <section class="kpi-grid">
-      ${kpi('Entradas em dinheiro', money.format(totals.cashIncome), 'Receitas e rendimentos em contas', 'Dinheiro')}
-      ${kpi('Benefícios recebidos', money.format(totals.benefits), `${money.format(totals.benefitSpend)} usados no mês`, 'Benefício', 'benefit')}
-      ${kpi('Gastos reais', money.format(totals.expense), 'Sem transferências internas', 'Consumo')}
-      ${kpi('Resultado do mês', money.format(result), `${money.format(totals.invest)} em aportes · inclui pagamentos por terceiros`, result >= 0 ? 'Positivo' : 'Atenção', result >= 0 ? 'positive' : '')}
+      ${kpi('Entradas em dinheiro', money.format(totals.cashIncome), 'Receitas e rendimentos em contas', 'Dinheiro', '', 'cash_income')}
+      ${kpi('Benefícios recebidos', money.format(totals.benefits), `${money.format(totals.benefitSpend)} usados no mês`, 'Benefício', 'benefit', 'benefit')}
+      ${kpi('Gastos reais', money.format(totals.expense), 'Sem transferências internas', 'Consumo', '', 'expense')}
+      ${kpi('Resultado do mês', money.format(result), `${money.format(netInvestment)} direcionados líquidos a investimentos · inclui pagamentos por terceiros`, result >= 0 ? 'Positivo' : 'Atenção', result >= 0 ? 'positive' : '', 'result')}
     </section>
 
     <section class="dashboard-grid grid-main">
@@ -442,11 +445,17 @@ function renderOverview() {
   $('insightPurchases')?.addEventListener('click', () => navigate('purchases'))
   $('insightBenefit')?.addEventListener('click', () => navigate('accounts'))
   document.querySelectorAll('[data-category-group]').forEach((b) => b.addEventListener('click', () => openCategoryTransactions(b.dataset.categoryGroup)))
+  document.querySelectorAll('[data-account-drill]').forEach((b) => b.addEventListener('click', () => openTransactionDrilldown({ accountId: b.dataset.accountDrill })))
+  document.querySelectorAll('[data-kpi-drill]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.kpiDrill === 'result') openResultBreakdown(totals, result, netInvestment)
+    else openTransactionDrilldown({ mode: b.dataset.kpiDrill })
+  }))
   bindTransactionOpeners()
 }
 
-function kpi(label, value, helper, chip, tone = '') {
-  return `<article class="kpi-card ${tone}"><div class="kpi-head"><span>${esc(label)}</span><span class="kpi-chip">${esc(chip)}</span></div><strong>${esc(value)}</strong><small>${esc(helper)}</small></article>`
+function kpi(label, value, helper, chip, tone = '', drill = '') {
+  const content = `<div class="kpi-head"><span>${esc(label)}</span><span class="kpi-chip">${esc(chip)}</span></div><strong>${esc(value)}</strong><small>${esc(helper)}</small>${drill ? '<span class="kpi-open-hint">Ver detalhes →</span>' : ''}`
+  return drill ? `<button type="button" class="kpi-card kpi-clickable ${tone}" data-kpi-drill="${esc(drill)}">${content}</button>` : `<article class="kpi-card ${tone}">${content}</article>`
 }
 function panelHead(title, subtitle, action = '') {
   return `<div class="panel-head"><div><h3>${esc(title)}</h3><p>${esc(subtitle)}</p></div>${action ? (action.startsWith('<') ? action : `<span class="panel-tag">${esc(action)}</span>`) : ''}</div>`
@@ -472,8 +481,18 @@ function categoryBars(cats) {
 }
 
 function openCategoryTransactions(groupName) {
-  state.transactionDrilldown = { group: groupName || null, categoryId: null }
+  openTransactionDrilldown({ group: groupName || null })
+}
+function openTransactionDrilldown(spec = {}) {
+  state.transactionDrilldown = { group: null, categoryId: null, accountId: null, mode: null, ...spec }
   navigate('transactions')
+}
+function openResultBreakdown(totals, result, netInvestment = 0) {
+  const resources = totals.cashIncome + totals.benefits + totals.thirdPartyIncome
+  const modal = $('modalHost')
+  modal.innerHTML = `<div class="modal-backdrop"><div class="modal"><div class="modal-head"><div><span class="eyebrow">COMPOSIÇÃO DO RESULTADO</span><h2>${esc(monthFmt.format(parseDate(`${state.month}-01`)))}</h2><div class="modal-sub">O resultado é formado pelos recursos do mês menos consumo e aportes.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="result-breakdown"><button type="button" data-result-drill="cash_income"><span>Entradas em dinheiro</span><strong>+ ${money.format(totals.cashIncome)}</strong></button><button type="button" data-result-drill="benefit"><span>Benefícios</span><strong>+ ${money.format(totals.benefits)}</strong></button><div><span>Recursos via terceiro</span><strong>+ ${money.format(totals.thirdPartyIncome)}</strong></div><button type="button" data-result-drill="expense"><span>Gastos reais</span><strong>− ${money.format(totals.expense)}</strong></button><div><span>Aportes líquidos (aportes − resgates)</span><strong>− ${money.format(netInvestment)}</strong></div><div class="result-total"><span>Resultado</span><strong>${money.format(result)}</strong></div></div></div></div>`
+  $('closeModal')?.addEventListener('click', () => { modal.innerHTML = '' })
+  modal.querySelectorAll('[data-result-drill]').forEach((b) => b.addEventListener('click', () => { modal.innerHTML = ''; openTransactionDrilldown({ mode: b.dataset.resultDrill }) }))
 }
 function accountIcon(a) {
   const cls = a.account_type === 'benefit' ? 'benefit' : a.account_type === 'virtual' ? 'virtual' : ''
@@ -482,7 +501,7 @@ function accountIcon(a) {
 }
 function accountRow(a) {
   const movement = state.transactions.filter((t) => t.account_id === a.id).reduce((s, t) => s + num(t.amount), 0)
-  return `<div class="account-row">${accountIcon(a)}<div class="account-copy"><strong>${esc(a.name)}</strong><span>${esc(a.institution.replaceAll('_', ' '))}</span></div><strong>${money.format(movement)}</strong></div>`
+  return `<button type="button" class="account-row account-row-clickable" data-account-drill="${a.id}" title="Ver movimentações de ${esc(a.name)}">${accountIcon(a)}<div class="account-copy"><strong>${esc(a.name)}</strong><span>${esc(a.institution.replaceAll('_', ' '))}</span></div><strong>${money.format(movement)}</strong></button>`
 }
 function transactionRow(t, { selectMode = false } = {}) {
   const pos = num(t.amount) > 0
@@ -514,16 +533,21 @@ function renderTransactions() {
 
   let filter = 'all'
   if (state.transactionDrilldown?.categoryId) $('txCategory').value = state.transactionDrilldown.categoryId
+  if (state.transactionDrilldown?.accountId) $('txAccount').value = state.transactionDrilldown.accountId
   const draw = () => {
     const q = $('txSearch').value.trim().toLowerCase()
     const acc = $('txAccount').value
     const cat = $('txCategory').value
     const group = state.transactionDrilldown?.group || ''
+    const drillAccount = state.transactionDrilldown?.accountId || ''
+    const drillMode = state.transactionDrilldown?.mode || ''
     const rows = state.transactions.filter((t) => {
       const hay = `${displayDescription(t)} ${t.description || ''} ${t.merchant || ''} ${(t.tags || []).join(' ')}`.toLowerCase()
       const statusMatch = filter === 'all' || (filter === 'needs_review' && t.review_status === 'needs_review') || (filter === 'expense' && t.flow_type === 'expense') || (filter === 'income' && ['income', 'yield'].includes(t.flow_type)) || (filter === 'grouped' && !!t.purchase_id)
       const txGroup = t.categories?.group_name || categoryById(t.category_id)?.group_name || ''
-      return (!q || hay.includes(q)) && (!acc || t.account_id === acc) && (!cat || t.category_id === cat) && (!group || txGroup === group) && statusMatch
+      const accountType = t.accounts?.account_type || accountById(t.account_id)?.account_type || ''
+      const modeMatch = !drillMode || (drillMode === 'cash_income' && ['income','yield'].includes(t.flow_type) && num(t.amount) > 0 && !t.is_internal_transfer && !['benefit','virtual'].includes(accountType)) || (drillMode === 'benefit' && accountType === 'benefit') || (drillMode === 'expense' && t.flow_type === 'expense')
+      return (!q || hay.includes(q)) && (!acc || t.account_id === acc) && (!drillAccount || t.account_id === drillAccount) && (!cat || t.category_id === cat) && (!group || txGroup === group) && modeMatch && statusMatch
     })
     $('txList').innerHTML = rows.length ? rows.map((t) => transactionRow(t, { selectMode: state.selectionMode })).join('') : empty('Nenhuma transação com esses filtros.')
     renderDrilldownFilter(rows.length)
@@ -540,11 +564,14 @@ function renderTransactions() {
     if (!host) return
     const group = state.transactionDrilldown?.group
     const categoryId = state.transactionDrilldown?.categoryId
+    const accountId = state.transactionDrilldown?.accountId
+    const mode = state.transactionDrilldown?.mode
     const cat = categoryId ? categoryById(categoryId) : null
-    const label = cat ? `${cat.group_name} · ${cat.name}` : group
+    const modeLabel = ({cash_income:'Entradas em dinheiro',benefit:'Benefícios',expense:'Gastos reais'})[mode] || ''
+    const label = cat ? `${cat.group_name} · ${cat.name}` : group || (accountId ? (accountById(accountId)?.name || 'Conta') : '') || modeLabel
     if (!label) { host.innerHTML = ''; return }
     host.innerHTML = `<div class="drilldown-banner"><div><span>Filtro vindo do dashboard</span><strong>${esc(label)}</strong><small>${count} lançamento(s) neste mês</small></div><button id="clearDrilldown" class="button small" type="button">× Limpar filtro</button></div>`
-    $('clearDrilldown')?.addEventListener('click', () => { state.transactionDrilldown = null; $('txCategory').value = ''; draw() })
+    $('clearDrilldown')?.addEventListener('click', () => { state.transactionDrilldown = null; $('txCategory').value = ''; $('txAccount').value = ''; draw() })
   }
 
   const renderSelectionBar = () => {
@@ -576,6 +603,8 @@ function openTransactionModal(id) {
   if (!t) return
   const modal = $('modalHost')
   const sourceAccount = t.accounts?.name || accountById(t.account_id)?.name || 'Conta'
+  const currentAccountMissing = !state.accounts.some((a) => a.id === t.account_id)
+  const currentAccountOption = currentAccountMissing ? `<option value="${t.account_id}" selected>${esc(sourceAccount)} · encerrada</option>` : ''
   const relevantCategories = state.categories.filter((c) => t.flow_type === 'expense' ? c.kind === 'expense' : ['income', 'yield'].includes(t.flow_type) ? c.kind === 'income' : true)
   const snapshot = t.metadata?.source_snapshot
   const originalDescription = snapshot?.description || t.description
@@ -589,7 +618,7 @@ function openTransactionModal(id) {
       <label class="field-label full-span">Nome que aparece no painel<input id="editDisplay" value="${esc(t.display_description || '')}" placeholder="${esc(t.description)}"></label>
       <label class="field-label">Data usada nos relatórios<input id="editDate" type="date" value="${esc(t.transaction_date)}"></label>
       <label class="field-label">Valor usado no painel<input id="editAmount" inputmode="decimal" value="${Math.abs(num(t.amount)).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"><span class="tag-input-help">Use apenas o valor absoluto; o tipo define entrada ou saída.</span></label>
-      <label class="field-label">Conta<select id="editAccount">${state.accounts.map((a) => `<option value="${a.id}" ${a.id === t.account_id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
+      <label class="field-label">Conta<select id="editAccount">${currentAccountOption}${state.accounts.map((a) => `<option value="${a.id}" ${a.id === t.account_id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
       <label class="field-label">Tipo<select id="editFlow"><option value="expense" ${t.flow_type === 'expense' ? 'selected' : ''}>Despesa</option><option value="income" ${t.flow_type === 'income' ? 'selected' : ''}>Receita</option><option value="yield" ${t.flow_type === 'yield' ? 'selected' : ''}>Rendimento</option><option value="transfer" ${t.flow_type === 'transfer' ? 'selected' : ''}>Transferência</option><option value="investment" ${t.flow_type === 'investment' ? 'selected' : ''}>Investimento</option><option value="adjustment" ${t.flow_type === 'adjustment' ? 'selected' : ''}>Ajuste</option></select></label>
       <label class="field-label">Categoria<select id="editCategory"><option value="">Sem categoria</option>${relevantCategories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}<option value="__custom__">＋ Outro / criar categoria…</option></select></label><div id="customCategoryFields" class="custom-category-fields full-span hidden"><label class="field-label">Grupo<select id="customCategoryGroup">${[...new Set(relevantCategories.map((c) => c.group_name))].map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}<option value="Outros">Outros</option></select></label><label class="field-label">Nome da categoria<input id="customCategoryName" placeholder="Ex.: Mercado do condomínio"></label><div class="custom-learn-note"><strong>O sistema aprende com você.</strong><span>Ao salvar, lançamentos iguais recebem esta categoria e a regra vale para as próximas importações.</span></div></div>
       <label class="field-label full-span">Observação<textarea id="editNotes" placeholder="Contexto que ajude você no futuro">${esc(t.notes || '')}</textarea></label>
@@ -644,7 +673,7 @@ function openTransactionModal(id) {
         const customName = $('customCategoryName').value.trim()
         const customGroup = $('customCategoryGroup').value || 'Outros'
         if (!customName) throw new Error('Escreva o nome da nova categoria.')
-        const acc = accountById(accountId)
+        const acc = accountById(accountId) || (accountId === t.account_id ? t.accounts : null)
         const matchField = t.merchant ? 'merchant' : 'description'
         const { data: learned, error: learnError } = await supabase.rpc('create_category_rule_and_reclassify', {
           p_group_name: customGroup, p_category_name: customName, p_kind: flow === 'income' || flow === 'yield' ? 'income' : flow === 'transfer' ? 'transfer' : flow === 'investment' ? 'investment' : 'expense',
@@ -671,7 +700,7 @@ function openTransactionModal(id) {
       if (error) throw error
 
       if (!isCustomCategory && $('createRule')?.checked && rulePattern && categoryId) {
-        const acc = accountById(accountId)
+        const acc = accountById(accountId) || (accountId === t.account_id ? t.accounts : null)
         const { error: ruleError } = await supabase.from('categorization_rules').insert({
           user_id: state.session.user.id,
           institution: acc?.institution || null,
@@ -1763,14 +1792,16 @@ function renderInvestments() {
     return { ...g, value, pct: target > 0 ? Math.min(100, value / target * 100) : 0 }
   })
   const positions = state.investmentPositions
+  const invFilter = state.investmentMovementFilter || 'all'
+  const displayedInvestmentMoves = invFilter === 'all' ? state.investmentMovements : state.investmentMovements.filter((m) => m.movement_type === invFilter)
   const monthName = monthFmt.format(parseDate(`${state.month}-01`))
   $('mainArea').innerHTML = `<div class="content-stack investment-view">
     <section class="section-header investment-hero-head"><div><span class="muted">Patrimônio e crescimento</span><h2>Investimentos</h2><p>Aportes não são gastos. Aqui você acompanha o que virou patrimônio e quanto esse patrimônio está rendendo.</p></div><div class="section-actions"><button id="investmentIncomeBtn" class="button" type="button">＋ Rendimento</button><button id="investmentWithdrawalBtn" class="button" type="button">↘ Resgate</button><button id="investmentContributionBtn" class="button primary" type="button">＋ Registrar aporte</button></div></section>
     <section class="investment-kpi-grid">
-      <article class="investment-kpi featured"><span class="kpi-label">Patrimônio investido</span><strong>${money.format(t.current)}</strong><span class="kpi-foot">Valor atual das posições</span></article>
-      <article class="investment-kpi"><span class="kpi-label">Aportes em ${esc(monthName)}</span><strong>${money.format(t.monthContribution)}</strong><span class="kpi-foot">Resgates: ${money.format(t.monthWithdrawal)}</span></article>
-      <article class="investment-kpi"><span class="kpi-label">Rendimentos no mês</span><strong>${money.format(t.monthIncome)}</strong><span class="kpi-foot">Registrados como ganho, não como aporte</span></article>
-      <article class="investment-kpi ${t.result >= 0 ? 'positive' : 'negative'}"><span class="kpi-label">Resultado acumulado</span><strong>${money.format(t.result)}</strong><span class="kpi-foot">${t.pct.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}% sobre o principal</span></article>
+      <button type="button" class="investment-kpi investment-kpi-clickable featured" data-invest-drill="positions"><span class="kpi-label">Patrimônio investido</span><strong>${money.format(t.current)}</strong><span class="kpi-foot">Ver posições →</span></button>
+      <button type="button" class="investment-kpi investment-kpi-clickable" data-invest-drill="contribution"><span class="kpi-label">Aportes em ${esc(monthName)}</span><strong>${money.format(t.monthContribution)}</strong><span class="kpi-foot">Resgates: ${money.format(t.monthWithdrawal)} · ver aportes →</span></button>
+      <button type="button" class="investment-kpi investment-kpi-clickable" data-invest-drill="income"><span class="kpi-label">Rendimentos no mês</span><strong>${money.format(t.monthIncome)}</strong><span class="kpi-foot">Ver rendimentos →</span></button>
+      <button type="button" class="investment-kpi investment-kpi-clickable ${t.result >= 0 ? 'positive' : 'negative'}" data-invest-drill="positions"><span class="kpi-label">Resultado acumulado</span><strong>${money.format(t.result)}</strong><span class="kpi-foot">${t.pct.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}% · ver posições →</span></button>
     </section>
     <section class="investment-layout">
       <div class="panel investment-portfolio-panel"><div class="panel-head"><div><span class="eyebrow">CARTEIRA</span><h3>Posições</h3><p>Atualize o valor periodicamente para acompanhar a evolução patrimonial.</p></div><button id="newPositionBtn" class="button small" type="button">＋ Nova posição</button></div>
@@ -1783,7 +1814,7 @@ function renderInvestments() {
     </section>
     <section class="investment-layout goals-layout">
       <div class="panel"><div class="panel-head"><div><span class="eyebrow">OBJETIVOS</span><h3>Metas patrimoniais</h3><p>Associe posições a objetivos como reserva de emergência, viagem ou aposentadoria.</p></div><button id="newGoalBtn" class="button small" type="button">＋ Nova meta</button></div>${goalRows.length ? `<div class="goal-list">${goalRows.map((g) => `<button type="button" class="goal-card" data-goal="${g.id}"><div class="goal-top"><div><strong>${esc(g.name)}</strong><span>${g.target_date ? `Até ${fullDateFmt.format(parseDate(g.target_date))}` : 'Sem prazo definido'}</span></div><strong>${g.pct.toLocaleString('pt-BR',{maximumFractionDigits:0})}%</strong></div><div class="goal-values"><span>${money.format(g.value)}</span><span>Meta ${money.format(num(g.target_amount))}</span></div><div class="progress-track goal-progress"><span style="width:${g.pct}%"></span></div></button>`).join('')}</div>` : '<div class="empty-state compact"><span>Crie uma meta para saber se os seus aportes estão levando você ao objetivo desejado.</span></div>'}</div>
-      <div class="panel"><div class="panel-head"><div><span class="eyebrow">MOVIMENTAÇÕES</span><h3>${esc(monthName)}</h3><p>Aportes, resgates e rendimentos registrados no mês.</p></div></div>${state.investmentMovements.length ? `<div class="investment-move-list">${state.investmentMovements.slice(0,10).map((m) => `<div class="investment-move-row"><div><strong>${esc(m.investment_positions?.name || m.accounts?.name || 'Investimento')}</strong><span>${esc(movementTypeLabel(m.movement_type))} · ${dateFmt.format(parseDate(m.movement_date))}</span></div><strong class="${m.movement_type === 'withdrawal' || m.movement_type === 'fee' ? 'negative-text' : ''}">${m.movement_type === 'withdrawal' || m.movement_type === 'fee' ? '− ' : '+ '}${money.format(num(m.amount))}</strong></div>`).join('')}</div>` : '<div class="empty-state compact"><span>Nenhuma movimentação de investimento neste mês.</span></div>'}</div>
+      <div class="panel" id="investmentMovementsPanel"><div class="panel-head"><div><span class="eyebrow">MOVIMENTAÇÕES</span><h3>${esc(monthName)}</h3><p>${invFilter === 'all' ? 'Aportes, resgates e rendimentos registrados no mês.' : `Filtro: ${esc(movementTypeLabel(invFilter))}`}</p></div>${invFilter !== 'all' ? '<button id="clearInvestmentFilter" class="button small" type="button">Ver todas</button>' : ''}</div>${displayedInvestmentMoves.length ? `<div class="investment-move-list">${displayedInvestmentMoves.slice(0,10).map((m) => `<div class="investment-move-row"><div><strong>${esc(m.investment_positions?.name || m.accounts?.name || 'Investimento')}</strong><span>${esc(movementTypeLabel(m.movement_type))} · ${dateFmt.format(parseDate(m.movement_date))}</span></div><strong class="${m.movement_type === 'withdrawal' || m.movement_type === 'fee' ? 'negative-text' : ''}">${m.movement_type === 'withdrawal' || m.movement_type === 'fee' ? '− ' : '+ '}${money.format(num(m.amount))}</strong></div>`).join('')}</div>` : '<div class="empty-state compact"><span>Nenhuma movimentação de investimento neste mês.</span></div>'}</div>
     </section>
   </div>`
   $('investmentContributionBtn')?.addEventListener('click', openInvestmentContributionModal)
@@ -1794,6 +1825,12 @@ function renderInvestments() {
   $('newGoalBtn')?.addEventListener('click', () => openInvestmentGoalModal())
   document.querySelectorAll('[data-position]').forEach((b) => b.addEventListener('click', () => openInvestmentPositionModal(b.dataset.position)))
   document.querySelectorAll('[data-goal]').forEach((b) => b.addEventListener('click', () => openInvestmentGoalModal(b.dataset.goal)))
+  document.querySelectorAll('[data-invest-drill]').forEach((b) => b.addEventListener('click', () => {
+    const kind = b.dataset.investDrill
+    if (kind === 'positions') document.querySelector('.investment-portfolio-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    else { state.investmentMovementFilter = kind; renderInvestments(); setTimeout(() => $('investmentMovementsPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) }
+  }))
+  $('clearInvestmentFilter')?.addEventListener('click', () => { state.investmentMovementFilter = 'all'; renderInvestments() })
 }
 function investmentAccountOptions(selected='') {
   const accounts = state.accounts.filter((a) => ['investment','savings'].includes(a.account_type))
