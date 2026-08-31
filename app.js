@@ -38,6 +38,7 @@ const state = {
   month: monthKey(new Date()),
   accounts: [],
   categories: [],
+  rules: [],
   transactions: [],
   purchases: [],
   allocations: [],
@@ -244,18 +245,20 @@ async function loadData() {
     const user = state.session.user
     const { start, end } = monthRange()
     const monthDate = `${state.month}-01`
-    const [acc, cat, tx, pur, profile, budget] = await Promise.all([
+    const [acc, cat, rules, tx, pur, profile, budget] = await Promise.all([
       supabase.from('accounts').select('*').eq('active', true).order('created_at'),
       supabase.from('categories').select('*').eq('active', true).order('group_name').order('name'),
+      supabase.from('categorization_rules').select('*').eq('active', true).order('priority'),
       supabase.from('transactions').select('*, accounts(name,institution,account_type), categories(name,group_name,kind)').gte('transaction_date', start).lt('transaction_date', end).order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(1600),
       supabase.from('purchases').select('*').gte('purchase_date', start).lt('purchase_date', end).neq('status', 'ignored').order('purchase_date', { ascending: false }),
       supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
       supabase.from('budgets').select('*').eq('month', monthDate).is('category_id', null).maybeSingle()
     ])
-    const err = acc.error || cat.error || tx.error || pur.error || profile.error || budget.error
+    const err = acc.error || cat.error || rules.error || tx.error || pur.error || profile.error || budget.error
     if (err) throw err
     state.accounts = acc.data || []
     state.categories = cat.data || []
+    state.rules = rules.data || []
     state.transactions = tx.data || []
     state.purchases = pur.data || []
     state.profile = profile.data || null
@@ -544,7 +547,7 @@ function openTransactionModal(id) {
       <label class="field-label">Data usada nos relatórios<input id="editDate" type="date" value="${esc(t.transaction_date)}"></label>
       <label class="field-label">Conta<select id="editAccount">${state.accounts.map((a) => `<option value="${a.id}" ${a.id === t.account_id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
       <label class="field-label">Tipo<select id="editFlow"><option value="expense" ${t.flow_type === 'expense' ? 'selected' : ''}>Despesa</option><option value="income" ${t.flow_type === 'income' ? 'selected' : ''}>Receita</option><option value="yield" ${t.flow_type === 'yield' ? 'selected' : ''}>Rendimento</option><option value="transfer" ${t.flow_type === 'transfer' ? 'selected' : ''}>Transferência</option><option value="investment" ${t.flow_type === 'investment' ? 'selected' : ''}>Investimento</option><option value="adjustment" ${t.flow_type === 'adjustment' ? 'selected' : ''}>Ajuste</option></select></label>
-      <label class="field-label">Categoria<select id="editCategory"><option value="">Sem categoria</option>${relevantCategories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="field-label">Categoria<select id="editCategory"><option value="">Sem categoria</option>${relevantCategories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}<option value="__custom__">＋ Outro / criar categoria…</option></select></label><div id="customCategoryFields" class="custom-category-fields full-span hidden"><label class="field-label">Grupo<select id="customCategoryGroup">${[...new Set(relevantCategories.map((c) => c.group_name))].map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}<option value="Outros">Outros</option></select></label><label class="field-label">Nome da categoria<input id="customCategoryName" placeholder="Ex.: Mercado do condomínio"></label><div class="custom-learn-note"><strong>O sistema aprende com você.</strong><span>Ao salvar, lançamentos iguais recebem esta categoria e a regra vale para as próximas importações.</span></div></div>
       <label class="field-label full-span">Observação<textarea id="editNotes" placeholder="Contexto que ajude você no futuro">${esc(t.notes || '')}</textarea></label>
       <label class="field-label full-span">Tags<input id="editTags" value="${esc((t.tags || []).join(', '))}" placeholder="ex.: mercado, casa, viagem"><span class="tag-input-help">Separe as tags por vírgula.</span></label>
     </div>
@@ -561,6 +564,7 @@ function openTransactionModal(id) {
   $('cancelModal').addEventListener('click', close)
   $('splitTx')?.addEventListener('click', () => openSplitModal(t.id))
   $('editInternal').addEventListener('change', () => { if ($('editInternal').checked) $('editFlow').value = 'transfer' })
+  $('editCategory').addEventListener('change', () => setHidden($('customCategoryFields'), $('editCategory').value !== '__custom__'))
 
   $('txEditForm').addEventListener('submit', async (e) => {
     e.preventDefault()
@@ -575,8 +579,23 @@ function openTransactionModal(id) {
       const tags = $('editTags').value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 12)
       const display = $('editDisplay').value.trim()
       const flow = $('editFlow').value
-      const categoryId = $('editCategory').value || null
+      let categoryId = $('editCategory').value || null
       const accountId = $('editAccount').value
+      const isCustomCategory = categoryId === '__custom__'
+      if (isCustomCategory) {
+        const customName = $('customCategoryName').value.trim()
+        const customGroup = $('customCategoryGroup').value || 'Outros'
+        if (!customName) throw new Error('Escreva o nome da nova categoria.')
+        const acc = accountById(accountId)
+        const matchField = t.merchant ? 'merchant' : 'description'
+        const { data: learned, error: learnError } = await supabase.rpc('create_category_rule_and_reclassify', {
+          p_group_name: customGroup, p_category_name: customName, p_kind: flow === 'income' || flow === 'yield' ? 'income' : flow === 'transfer' ? 'transfer' : flow === 'investment' ? 'investment' : 'expense',
+          p_institution: acc?.institution || '', p_match_field: matchField, p_pattern: rulePattern, p_flow_type: internal ? 'transfer' : flow, p_set_internal_transfer: internal
+        })
+        if (learnError) throw learnError
+        categoryId = learned?.category_id || null
+        if (!categoryId) throw new Error('Não foi possível criar a categoria.')
+      }
       const internal = $('editInternal').checked
       const { error } = await supabase.from('transactions').update({
         display_description: display || null,
@@ -593,7 +612,7 @@ function openTransactionModal(id) {
       }).eq('id', t.id)
       if (error) throw error
 
-      if ($('createRule')?.checked && rulePattern && categoryId) {
+      if (!isCustomCategory && $('createRule')?.checked && rulePattern && categoryId) {
         const acc = accountById(accountId)
         const { error: ruleError } = await supabase.from('categorization_rules').insert({
           user_id: state.session.user.id,
@@ -609,7 +628,7 @@ function openTransactionModal(id) {
         if (ruleError && ruleError.code !== '23505') throw ruleError
       }
       close()
-      toast('Transação atualizada.', 'success')
+      toast(isCustomCategory ? 'Categoria criada e regra aplicada aos lançamentos iguais.' : 'Transação atualizada.', 'success')
       await loadData()
     } catch (err) {
       showInfo('txEditMessage', humanError(err))
@@ -1045,8 +1064,8 @@ function renderImport() {
   if (imp.step === 2) {
     const fresh = imp.rows.filter((r) => !r.duplicate)
     const dup = imp.rows.filter((r) => r.duplicate)
-    const review = fresh.filter((r) => !r.category_id)
-    const filtered = imp.rows.filter((r) => imp.filter === 'all' || (imp.filter === 'review' && !r.duplicate && !r.category_id) || (imp.filter === 'duplicates' && r.duplicate))
+    const review = fresh.filter(needsImportReview)
+    const filtered = imp.rows.filter((r) => imp.filter === 'all' || (imp.filter === 'review' && !r.duplicate && needsImportReview(r)) || (imp.filter === 'duplicates' && r.duplicate))
     const unsupported = imp.files.filter((x) => ['unsupported', 'error', 'needs_source'].includes(x.status))
     $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="panel"><div class="review-head"><div><span class="eyebrow">PRÉVIA DO LOTE</span><h2>${fresh.length} novas · ${dup.length} duplicadas</h2><p class="muted">${imp.files.length} arquivo(s) analisado(s). Duplicidades incluem histórico já salvo e sobreposição entre arquivos deste lote.</p></div><button id="changeFiles" class="button" type="button">Voltar aos arquivos</button></div>
       <div class="review-summary">${summaryChip('Arquivos', imp.files.length)}${summaryChip('Novas', fresh.length)}${summaryChip('Duplicadas', dup.length)}${summaryChip('Para revisar', review.length)}</div>
@@ -1054,11 +1073,17 @@ function renderImport() {
       <div class="batch-mini-summary">${imp.files.map((x) => `<div><span>${esc(x.file.name)}</span><b>${esc(x.detected?.label || sourceLabel(state.accounts.find((a) => a.id === x.accountId)))}</b><small>${x.status === 'parsed' ? `${x.rows.filter((r) => !r.duplicate).length} novas · ${x.rows.filter((r) => r.duplicate).length} duplicadas` : esc(x.message || 'não analisado')}</small></div>`).join('')}</div>
       <div class="review-filter"><button class="filter-pill ${imp.filter === 'all' ? 'active' : ''}" data-review-filter="all" type="button">Todas</button><button class="filter-pill ${imp.filter === 'review' ? 'active' : ''}" data-review-filter="review" type="button">Só para revisar</button><button class="filter-pill ${imp.filter === 'duplicates' ? 'active' : ''}" data-review-filter="duplicates" type="button">Duplicadas</button></div><div class="review-table">${filtered.slice(0, 350).map(reviewRow).join('')}</div><div class="review-actions"><span>${review.length ? `${review.length} lançamento(s) podem ser revisados agora ou depois.` : 'Todas as novas transações têm categoria sugerida.'}</span><button id="confirmBatchImport" class="button primary" type="button" ${fresh.length ? '' : 'disabled'}>✓ Importar ${fresh.length} novas</button></div><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></section></div>`
     bindImportKindPicker()
-    $('changeFiles').addEventListener('click', () => { imp.step = 1; imp.message = ''; renderImport() })
+    $('changeFiles').addEventListener('click', () => {
+      imp.step = 1; imp.message = ''; imp.rows = [];
+      imp.files.forEach((entry) => { entry.rows = []; entry.status = entry.accountId ? 'ready' : 'needs_source'; entry.message = ''; });
+      renderImport()
+    })
     document.querySelectorAll('[data-review-filter]').forEach((b) => b.addEventListener('click', () => { imp.filter = b.dataset.reviewFilter; renderImport() }))
     document.querySelectorAll('[data-import-cat]').forEach((s) => s.addEventListener('change', () => {
       const row = imp.rows.find((r) => r._key === s.dataset.importCat)
-      if (row) { row.category_id = s.value || null; row.userEdited = true; renderImport() }
+      if (!row) return
+      if (s.value === '__custom__') { openImportCustomCategoryModal(row._key); return }
+      row.category_id = s.value || null; row.userEdited = true; renderImport()
     }))
     $('confirmBatchImport').addEventListener('click', confirmBatchImport)
     return
@@ -1073,12 +1098,59 @@ function renderImport() {
 function step(n, label, current) { const done = current > Number(n), active = current === Number(n); return `<div class="step ${done ? 'done' : ''} ${active ? 'active' : ''}"><span>${done ? '✓' : n}</span><strong>${esc(label)}</strong></div>` }
 function checkItem(title, text) { return `<div class="check-item"><div>✓</div><p><strong>${esc(title)}</strong><span>${esc(text)}</span></p></div>` }
 function summaryChip(label, value) { return `<div class="summary-chip"><span>${esc(label)}</span><strong>${value}</strong></div>` }
+function importCategoryName(r) { return categoryById(r.category_id)?.name || '' }
+function needsImportReview(r) { return !r.category_id || ['Outras despesas','Outras receitas'].includes(importCategoryName(r)) }
+function customRulePatternForRow(r) { return String(r.merchant || r.description || '').trim().slice(0, 120) }
+
 function reviewRow(r) {
   const cats = state.categories.filter((c) => r.flow_type === 'expense' ? c.kind === 'expense' : ['income', 'yield'].includes(r.flow_type) ? c.kind === 'income' : c.kind === 'transfer')
   const entry = state.import?.files?.find((x) => x.id === r.fileId)
   const account = state.accounts.find((a) => a.id === r.accountId)
-  return `<div class="review-row ${r.duplicate ? 'duplicate' : ''}"><div class="review-main"><strong>${esc(r.description)}</strong><span>${esc(dateFmt.format(parseDate(r.transaction_date)))} · ${esc(sourceLabel(account))} · ${r.duplicate ? 'já existe' : r.category_id ? 'categorizada' : 'precisa revisar'}</span><small>${esc(entry?.file.name || '')}</small></div><select data-import-cat="${r._key}" ${r.duplicate ? 'disabled' : ''}><option value="">Sem categoria</option>${cats.map((c) => `<option value="${c.id}" ${c.id === r.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select><span class="flow-chip">${r.is_internal_transfer ? 'Transferência' : esc(r.flow_type)}</span><span class="amount">${money.format(num(r.amount))}</span></div>`
+  return `<div class="review-row ${r.duplicate ? 'duplicate' : ''}"><div class="review-main"><strong>${esc(r.description)}</strong><span>${esc(dateFmt.format(parseDate(r.transaction_date)))} · ${esc(sourceLabel(account))} · ${r.duplicate ? 'já existe' : needsImportReview(r) ? 'precisa revisar' : 'categorizada'}</span><small>${esc(entry?.file.name || '')}</small></div><select data-import-cat="${r._key}" ${r.duplicate ? 'disabled' : ''}><option value="">Sem categoria</option>${cats.map((c) => `<option value="${c.id}" ${c.id === r.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}<option value="__custom__">＋ Outro / criar categoria…</option></select><span class="flow-chip">${r.is_internal_transfer ? 'Transferência' : esc(r.flow_type)}</span><span class="amount">${money.format(num(r.amount))}</span></div>`
 }
+function openImportCustomCategoryModal(rowKey) {
+  const r = state.import?.rows?.find((x) => x._key === rowKey)
+  if (!r) return
+  const modal = $('modalHost')
+  const kind = r.flow_type === 'income' || r.flow_type === 'yield' ? 'income' : r.flow_type === 'transfer' ? 'transfer' : r.flow_type === 'investment' ? 'investment' : 'expense'
+  const groups = [...new Set(state.categories.filter((c) => c.kind === kind).map((c) => c.group_name))]
+  const pattern = customRulePatternForRow(r)
+  const entry = state.import.files.find((x) => x.id === r.fileId)
+  const acc = accountById(r.accountId)
+  modal.innerHTML = `<div class="modal-backdrop"><form id="customImportForm" class="modal"><div class="modal-head"><div><span class="eyebrow">ENSINAR CATEGORIA</span><h2>${esc(r.description)}</h2><div class="modal-sub">Você define uma vez; o sistema reaproveita depois.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label">Grupo<select id="customImportGroup">${groups.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}<option value="Outros">Outros</option></select></label><label class="field-label">Nome da categoria<input id="customImportName" placeholder="Ex.: Mercado do condomínio" required></label></div><div class="learning-preview"><strong>Será aplicado automaticamente</strong><span>Todos os lançamentos deste lote com “${esc(pattern)}” receberão a nova categoria. A regra também valerá para os próximos extratos.</span></div><div id="customImportMessage" class="form-message hidden"></div><div class="modal-actions"><span class="muted">Origem: ${esc(entry?.detected?.label || sourceLabel(acc))}</span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button class="button primary" type="submit">✓ Criar e aplicar</button></div></div></form></div>`
+  const close = () => { modal.innerHTML = '' }
+  $('closeModal').addEventListener('click', close); $('cancelModal').addEventListener('click', close)
+  $('customImportForm').addEventListener('submit', async (e) => {
+    e.preventDefault()
+    const btn = e.submitter
+    setBusy(btn, true, 'Aprendendo')
+    try {
+      const name = $('customImportName').value.trim(); const group = $('customImportGroup').value || 'Outros'
+      if (!name) throw new Error('Escreva o nome da categoria.')
+      const matchField = r.merchant ? 'merchant' : 'description'
+      const { data, error } = await supabase.rpc('create_category_rule_and_reclassify', {
+        p_group_name: group, p_category_name: name, p_kind: kind, p_institution: acc?.institution || '',
+        p_match_field: matchField, p_pattern: pattern, p_flow_type: r.flow_type, p_set_internal_transfer: !!r.is_internal_transfer
+      })
+      if (error) throw error
+      const categoryId = data?.category_id
+      if (!categoryId) throw new Error('Não foi possível criar a categoria.')
+      let cat = state.categories.find((c) => c.id === categoryId)
+      if (!cat) { cat = { id: categoryId, user_id: state.session.user.id, name, group_name: group, kind, active: true }; state.categories.push(cat) }
+      state.rules.push({ id: data?.rule_id || `local-${Date.now()}`, user_id: state.session.user.id, institution: acc?.institution || null, match_field: matchField, pattern, category_id: categoryId, active: true, priority: 25 })
+      let applied = 0
+      state.import.rows.forEach((row) => {
+        const rowPattern = customRulePatternForRow(row)
+        const rowAcc = accountById(row.accountId)
+        if (!row.duplicate && rowPattern.toLowerCase() === pattern.toLowerCase() && (!acc?.institution || rowAcc?.institution === acc.institution)) {
+          row.category_id = categoryId; row.userEdited = true; applied++
+        }
+      })
+      close(); toast(`Categoria criada e aplicada a ${applied} lançamento(s) do lote.`, 'success'); renderImport()
+    } catch (err) { showInfo('customImportMessage', humanError(err)); setBusy(btn, false) }
+  })
+}
+
 function inferProfile(account, file) {
   const ext = file.name.toLowerCase().split('.').pop()
   if (account?.institution === 'inter' && account.account_type === 'credit_card') return 'inter_card_csv'
@@ -1132,13 +1204,22 @@ async function analyzeBatchImport() {
     const alreadySaved = new Set(existing)
     const seenInBatch = new Set()
     const catMap = new Map(state.categories.map((c) => [c.name, c.id]))
+    const findRuleCategory = (r, entry) => {
+      const acc = state.accounts.find((a) => a.id === entry.accountId)
+      const rule = state.rules.find((rule) => {
+        if (rule.institution && rule.institution !== acc?.institution) return false
+        const value = rule.match_field === 'merchant' ? r.merchant : rule.match_field === 'counterparty' ? r.counterparty : r.description
+        return value && String(value).trim().toLowerCase() === String(rule.pattern).trim().toLowerCase()
+      })
+      return rule?.category_id || null
+    }
     imp.rows = []
     for (const entry of parsedEntries) {
       entry.rows = (entry._parsedRaw || []).map((r, i) => {
         const intraBatchDuplicate = seenInBatch.has(r.fingerprint)
         const duplicate = alreadySaved.has(r.fingerprint) || intraBatchDuplicate
         if (!duplicate) seenInBatch.add(r.fingerprint)
-        return { ...r, fileId: entry.id, accountId: entry.accountId, _key: `${entry.id}-${i}-${r.fingerprint.slice(0, 8)}`, duplicate, duplicateReason: alreadySaved.has(r.fingerprint) ? 'existing' : intraBatchDuplicate ? 'batch' : null, category_id: r.category_hint ? catMap.get(r.category_hint) || null : null, userEdited: false }
+        return { ...r, fileId: entry.id, accountId: entry.accountId, _key: `${entry.id}-${i}-${r.fingerprint.slice(0, 8)}`, duplicate, duplicateReason: alreadySaved.has(r.fingerprint) ? 'existing' : intraBatchDuplicate ? 'batch' : null, category_id: findRuleCategory(r, entry) || (r.category_hint ? catMap.get(r.category_hint) || null : null), userEdited: false }
       })
       entry.status = 'parsed'
       delete entry._parsedRaw
@@ -1172,7 +1253,7 @@ async function confirmBatchImport() {
         const { data: batch, error: bErr } = await supabase.from('import_batches').insert({
           user_id: user.id, account_id: account.id, file_name: entry.file.name, file_hash: hash, institution: account.institution,
           source_format: entry.file.name.toLowerCase().endsWith('.ofx') ? 'ofx' : 'csv', status: 'confirmed', row_count: entry.rows.length,
-          duplicate_count: entry.rows.filter((r) => r.duplicate).length, review_count: fileRows.filter((r) => !r.category_id).length,
+          duplicate_count: entry.rows.filter((r) => r.duplicate).length, review_count: fileRows.filter(needsImportReview).length,
           confirmed_at: new Date().toISOString(), metadata: { detected_source: entry.detected?.label || null, automatic_detection: !entry.manualSource, batch_import: true }
         }).select('id').single()
         if (bErr) {
@@ -1184,7 +1265,7 @@ async function confirmBatchImport() {
           transaction_date: r.transaction_date, description: r.description, display_description: null, merchant: r.merchant, amount: r.amount,
           flow_type: r.flow_type, is_internal_transfer: r.is_internal_transfer, include_in_budget: r.include_in_budget,
           transaction_source: 'import', source_record_id: r.source_record_id, source_fingerprint: r.fingerprint,
-          review_status: r.category_id ? (r.userEdited ? 'reviewed' : 'auto') : 'needs_review', tags: [], metadata: r.raw_data
+          review_status: needsImportReview(r) && !r.userEdited ? 'needs_review' : (r.userEdited ? 'reviewed' : 'auto'), tags: [], metadata: r.raw_data
         }))
         const { error } = await supabase.from('transactions').insert(payload)
         if (error) throw error
