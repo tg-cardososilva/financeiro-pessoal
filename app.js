@@ -1,10 +1,29 @@
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/+esm'
-
 const SUPABASE_URL = 'https://qhpkraqrcvhhtbqjhkmm.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_OXgobfJOCgDy4OP2n_zKgg_tOvEa28F'
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-})
+let supabase = null
+
+async function loadSupabaseCreateClient() {
+  const sources = [
+    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/+esm',
+    'https://esm.sh/@supabase/supabase-js@2.57.4'
+  ]
+  let lastError = null
+  for (const source of sources) {
+    try {
+      const mod = await import(source)
+      if (typeof mod.createClient === 'function') return mod.createClient
+    } catch (err) { lastError = err }
+  }
+  throw lastError || new Error('Não foi possível carregar a biblioteca segura de conexão.')
+}
+
+function showBootFailure(err) {
+  const splash = document.getElementById('splash')
+  if (!splash) return
+  const copy = splash.querySelector('.splash-copy')
+  if (copy) copy.innerHTML = `<strong>Não consegui abrir o painel</strong><span>${esc(err?.message || 'Falha ao carregar a aplicação. Atualize a página e tente novamente.')}</span><button id="bootRetry" type="button" style="margin-top:12px;border:1px solid #d9ddda;background:white;border-radius:10px;padding:9px 12px;font:inherit;font-size:12px;cursor:pointer">Tentar novamente</button>`
+  document.getElementById('bootRetry')?.addEventListener('click', () => location.reload())
+}
 
 const $ = (id) => document.getElementById(id)
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -92,16 +111,27 @@ function humanError(err) {
 }
 
 async function boot() {
-  $('monthPicker').value = state.month
-  bindGlobalEvents()
-  const { data } = await supabase.auth.getSession()
-  state.session = data.session
-  supabase.auth.onAuthStateChange((event, session) => {
-    state.session = session
+  try {
+    const createClient = await loadSupabaseCreateClient()
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    })
+    $('monthPicker').value = state.month
+    bindGlobalEvents()
+    const { data, error } = await supabase.auth.getSession()
+    if (error) throw error
+    state.session = data.session
+    supabase.auth.onAuthStateChange((event, session) => {
+      state.session = session
+      renderSession()
+      if (event === 'PASSWORD_RECOVERY' && session) setTimeout(openPasswordResetModal, 120)
+    })
+    window.__financeiroBooted = true
     renderSession()
-    if (event === 'PASSWORD_RECOVERY' && session) setTimeout(openPasswordResetModal, 120)
-  })
-  renderSession()
+  } catch (err) {
+    console.error('Falha ao iniciar Financeiro:', err)
+    showBootFailure(err)
+  }
 }
 
 function bindGlobalEvents() {
@@ -949,7 +979,7 @@ function renderImport() {
     const detection = imp.file ? (imp.detected && detectedAccount
       ? `<div class="detected-source"><span class="detected-icon">✓</span><div><small>ORIGEM IDENTIFICADA</small><strong>${esc(imp.detected.label)}</strong><span>Vamos importar para ${esc(detectedAccount.name)}.</span></div><button id="correctSource" class="text-button" type="button">Corrigir origem</button></div>`
       : `<div class="detected-source warning"><span class="detected-icon">?</span><div><small>ORIGEM NÃO CONFIRMADA</small><strong>Precisamos de uma confirmação</strong><span>Escolha a conta somente porque este formato ainda não foi reconhecido.</span></div><button id="correctSource" class="text-button" type="button">Escolher origem</button></div>`)
-      : '')
+      : ''
     const manual = imp.manualSource || (imp.file && !imp.detected)
       ? `<div class="manual-source"><label class="field-label">Corrigir origem<select id="importAccount"><option value="">Selecione</option>${accounts.map((a) => `<option value="${a.id}" ${a.id === imp.accountId ? 'selected' : ''}>${esc(sourceLabel(a))}</option>`).join('')}</select></label>${imp.detected ? '<button id="useAutomatic" class="text-button" type="button">Usar identificação automática</button>' : ''}</div>`
       : ''
