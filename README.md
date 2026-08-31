@@ -38,3 +38,13 @@ Para atualizar uma versão já publicada, substitua no repositório os arquivos 
 ## Segurança
 
 O frontend usa somente a chave `publishable` do Supabase. O acesso aos dados é controlado pelas políticas RLS do banco. Nunca coloque uma chave `service_role` ou `sb_secret_...` neste repositório.
+
+## Atualização v2.1 — importação simplificada
+
+A tela **Importar extrato** agora foi dividida em três caminhos claros:
+
+- **Banco ou cartão:** envie OFX/CSV e o painel identifica automaticamente Inter Conta Corrente ou Inter Cartão pelos dados internos do arquivo. A correção manual só aparece quando necessário.
+- **Cartão Alimentação:** atalhos dedicados para registrar compra ou crédito do benefício sem misturar benefício com renda bancária.
+- **Pagamento por terceiro:** fluxo direto para despesas como aluguel pago antes do dinheiro passar pelas contas bancárias.
+
+A identificação automática foi validada com os três arquivos reais de agosto já usados no projeto: Inter OFX, Inter Conta Corrente CSV e Inter Cartão CSV.

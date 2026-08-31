@@ -849,20 +849,125 @@ function openPurchaseModal(id, initialTab = 'summary') {
   }
 }
 
-function renderImport() {
-  state.import ??= { step: 1, accountId: state.accounts.find((a) => ['checking', 'credit_card'].includes(a.account_type))?.id || state.accounts[0]?.id || '', file: null, rows: [], message: '', filter: 'all' }
+function defaultImportState(kind = 'bank') {
+  return { step: 1, kind, accountId: '', detected: null, manualSource: false, file: null, fileText: '', rows: [], message: '', filter: 'all' }
+}
+function bankImportAccounts() {
+  return state.accounts.filter((a) => !['benefit', 'virtual', 'savings', 'investment'].includes(a.account_type))
+}
+function benefitAccount() { return state.accounts.find((a) => a.account_type === 'benefit') }
+function sourceLabel(account) {
+  if (!account) return 'Origem não identificada'
+  const inst = account.institution === 'inter' ? 'Inter' : account.institution === 'mercado_pago' ? 'Mercado Pago' : account.institution.replaceAll('_', ' ')
+  const type = account.account_type === 'checking' ? 'Conta Corrente' : account.account_type === 'credit_card' ? 'Cartão' : account.account_type === 'wallet' ? 'Saldo' : accountTypeLabel(account.account_type)
+  return `${inst} · ${type}`
+}
+function detectImportSource(text, file) {
+  const sample = String(text || '').slice(0, 40000)
+  const upper = sample.toUpperCase()
+  const ext = (file?.name || '').toLowerCase().split('.').pop()
+  if (ext === 'ofx' && /<OFX>/i.test(sample) && (/BANCO INTERMEDIUM/i.test(sample) || /<FID>0?77\b/i.test(sample) || /<BANKID>0?77\b/i.test(sample))) {
+    return { institution: 'inter', accountType: 'checking', profile: 'inter_ofx', label: 'Inter · Conta Corrente', confidence: 'alta' }
+  }
+  if (/DATA LANÇAMENTO;DESCRIÇÃO;VALOR;SALDO/.test(upper) || (/EXTRATO CONTA CORRENTE/.test(upper) && /DATA LANÇAMENTO;/.test(upper))) {
+    return { institution: 'inter', accountType: 'checking', profile: 'inter_checking_csv', label: 'Inter · Conta Corrente', confidence: 'alta' }
+  }
+  if (/"?DATA"?,"?LANÇAMENTO"?,"?CATEGORIA"?,"?TIPO"?,"?VALOR"?/.test(upper)) {
+    return { institution: 'inter', accountType: 'credit_card', profile: 'inter_card_csv', label: 'Inter · Cartão', confidence: 'alta' }
+  }
+  return null
+}
+function findAccountForDetection(detected) {
+  if (!detected) return null
+  return state.accounts.find((a) => a.institution === detected.institution && a.account_type === detected.accountType) || null
+}
+async function inspectImportFile(file) {
   const imp = state.import
-  if (!state.accounts.some((a) => a.id === imp.accountId)) imp.accountId = state.accounts[0]?.id || ''
-  const steps = `<section class="import-steps">${step('1', 'Arquivo', imp.step)}<div class="step-line"></div>${step('2', 'Conferência', imp.step)}<div class="step-line"></div>${step('3', 'Concluído', imp.step)}</section>`
+  if (!file) return
+  imp.message = ''
+  imp.detected = null
+  imp.accountId = ''
+  imp.manualSource = false
+  try {
+    imp.fileText = await file.text()
+    const detected = detectImportSource(imp.fileText, file)
+    imp.detected = detected
+    const account = findAccountForDetection(detected)
+    if (account) imp.accountId = account.id
+    if (!detected) imp.message = 'Não reconheci a origem automaticamente. Você pode corrigir a origem abaixo sem alterar o arquivo.'
+  } catch (err) {
+    imp.fileText = ''
+    imp.message = 'Não foi possível ler esse arquivo. Tente um OFX ou CSV exportado pelo banco.'
+  }
+  renderImport()
+}
+function renderImportKindPicker(imp) {
+  return `<section class="import-kind-picker"><div class="import-kind-heading"><span class="eyebrow">ADICIONAR DADOS</span><h2>O que você quer registrar?</h2><p>Escolha só o tipo de informação. A conta específica é identificada automaticamente quando possível.</p></div><div class="import-kind-grid">
+    <button class="import-kind-card ${imp.kind === 'bank' ? 'active' : ''}" data-import-kind="bank" type="button"><span class="import-kind-icon">▦</span><strong>Banco ou cartão</strong><small>Envie OFX/CSV. Identificamos a origem.</small><b>Extratos →</b></button>
+    <button class="import-kind-card ${imp.kind === 'benefit' ? 'active' : ''}" data-import-kind="benefit" type="button"><span class="import-kind-icon benefit">◉</span><strong>Cartão alimentação</strong><small>Benefício recebido e compras do cartão.</small><b>Benefício →</b></button>
+    <button class="import-kind-card ${imp.kind === 'third_party' ? 'active' : ''}" data-import-kind="third_party" type="button"><span class="import-kind-icon third">⌂</span><strong>Pagamento por terceiro</strong><small>Ex.: aluguel pago antes do dinheiro entrar.</small><b>Registrar →</b></button>
+  </div></section>`
+}
+function bindImportKindPicker() {
+  document.querySelectorAll('[data-import-kind]').forEach((b) => b.addEventListener('click', () => {
+    const nextKind = b.dataset.importKind
+    if (state.import?.kind === nextKind) return
+    state.import = defaultImportState(nextKind)
+    renderImport()
+  }))
+}
+function renderImport() {
+  state.import ??= defaultImportState('bank')
+  const imp = state.import
+  const kindPicker = renderImportKindPicker(imp)
 
+  if (imp.kind === 'benefit') {
+    const account = benefitAccount()
+    $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}<section class="dashboard-grid import-grid"><div class="panel">${panelHead('Cartão Alimentação', 'Aqui o benefício fica separado da sua renda em dinheiro, mas entra normalmente na análise de consumo.')}
+      <div class="import-action-stack"><button id="benefitExpense" class="import-action-card" type="button"><span class="action-orb">−</span><div><strong>Registrar uma compra</strong><p>Use para compras pagas com o cartão alimentação.</p></div><b>→</b></button><button id="benefitIncome" class="import-action-card" type="button"><span class="action-orb positive">+</span><div><strong>Registrar crédito do benefício</strong><p>Ex.: crédito mensal “Benefício Base”.</p></div><b>→</b></button></div>
+      ${account ? `<div class="detected-source neutral"><span class="detected-icon">✓</span><div><small>CONTA VINCULADA</small><strong>${esc(account.name)}</strong><span>O saldo do benefício não é somado à sua renda bancária.</span></div></div>` : '<div class="form-message">Não encontrei uma conta do tipo Benefício. Crie uma em Contas antes de registrar.</div>'}</div>
+      <div class="panel">${panelHead('Por que fica separado?', 'O benefício financia consumo, mas não é dinheiro disponível na sua conta corrente.')}<div class="check-list">${checkItem('Sem inflar salário', 'O crédito do benefício aparece separado das entradas em dinheiro.')}${checkItem('Consumo completo', 'As compras ainda contam normalmente em Alimentação e nas demais categorias.')}${checkItem('Compra agrupada', 'Depois, uma compra pode juntar cartão alimentação + débito em um único total.')}${checkItem('Extrato estruturado', 'Quando tivermos um arquivo exportável desse cartão, adicionamos a leitura automática sem mudar esta tela.')}</div></div></section></div>`
+    bindImportKindPicker()
+    if ($('benefitExpense')) $('benefitExpense').addEventListener('click', () => openEntryModal({ mode: 'expense', accountId: account?.id || '' }))
+    if ($('benefitIncome')) $('benefitIncome').addEventListener('click', () => openEntryModal({ mode: 'income', accountId: account?.id || '', description: 'Benefício Base' }))
+    return
+  }
+
+  if (imp.kind === 'third_party') {
+    $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}<section class="dashboard-grid import-grid"><div class="panel">${panelHead('Pagamento por terceiro', 'Registre despesas que são suas, mas foram pagas diretamente antes do dinheiro passar pelas suas contas.')}
+      <div class="third-party-hero"><div class="third-party-hero-icon">⌂</div><div><span class="eyebrow">VISÃO FINANCEIRA REAL</span><h3>O gasto aparece. Seu saldo bancário não muda.</h3><p>Ideal para aluguel, condomínio ou outra obrigação paga diretamente por uma terceira pessoa.</p></div></div><button id="thirdPartyEntry" class="button primary full" type="button">＋ Registrar pagamento por terceiro</button></div>
+      <div class="panel">${panelHead('Como será registrado', 'Criamos um par financeiro que preserva a leitura econômica sem inventar movimento bancário.')}<div class="third-party-flow"><div><small>RECURSO DESTINADO</small><strong>＋ Receita via terceiro</strong></div><span>→</span><div><small>DESPESA REAL</small><strong>− Moradia / categoria escolhida</strong></div></div><div class="check-list">${checkItem('Impacto bancário zero', 'Inter e Mercado Pago permanecem com os saldos reais.')}${checkItem('Orçamento correto', 'A despesa entra nos gráficos, médias e orçamento do mês.')}${checkItem('Comprovante opcional', 'Podemos vincular o comprovante ao lançamento posteriormente.')}</div></div></section></div>`
+    bindImportKindPicker()
+    $('thirdPartyEntry').addEventListener('click', () => openEntryModal({ mode: 'third_party', description: 'Aluguel + condomínio' }))
+    return
+  }
+
+  const steps = `<section class="import-steps">${step('1', 'Arquivo', imp.step)}<div class="step-line"></div>${step('2', 'Conferência', imp.step)}<div class="step-line"></div>${step('3', 'Concluído', imp.step)}</section>`
   if (imp.step === 1) {
-    $('mainArea').innerHTML = `<div class="content-stack">${steps}<section class="dashboard-grid import-grid"><div class="panel">${panelHead('Selecione o extrato', 'Inter OFX/CSV já está habilitado. O sistema faz uma prévia antes de gravar.')}
-      <label class="field-label">Conta de origem<select id="importAccount">${state.accounts.map((a) => `<option value="${a.id}" ${a.id === imp.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
-      <label class="dropzone"><div class="drop-icon">⇧</div><strong>${imp.file ? esc(imp.file.name) : 'Escolher arquivo'}</strong><span>${imp.file ? `${(imp.file.size / 1024).toFixed(1)} KB` : 'OFX ou CSV · até 10 MB'}</span><input id="importFile" type="file" accept=".ofx,.csv,text/csv"></label>
-      <button id="analyzeBtn" class="button primary full" type="button">✦ Analisar extrato</button><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></div>
-      <div class="panel">${panelHead('O que acontece antes de importar', 'A revisão evita que o banco dite sozinho como você entende seus gastos.')}<div class="check-list">${checkItem('Duplicidades', 'O mesmo extrato pode ser enviado novamente sem replicar lançamentos.')}${checkItem('Categoria sugerida', 'Você pode corrigir a categoria antes da importação.')}${checkItem('Fila de revisão', 'Descrições incertas ficam marcadas para você revisar depois.')}${checkItem('Compra real', 'Depois da importação, pagamentos do mesmo mercado podem ser agrupados.')}</div></div></section></div>`
-    $('importAccount').addEventListener('change', (e) => { imp.accountId = e.target.value })
-    $('importFile').addEventListener('change', (e) => { imp.file = e.target.files?.[0] || null; imp.message = ''; renderImport() })
+    const accounts = bankImportAccounts()
+    const detectedAccount = state.accounts.find((a) => a.id === imp.accountId)
+    const detection = imp.file ? (imp.detected && detectedAccount
+      ? `<div class="detected-source"><span class="detected-icon">✓</span><div><small>ORIGEM IDENTIFICADA</small><strong>${esc(imp.detected.label)}</strong><span>Vamos importar para ${esc(detectedAccount.name)}.</span></div><button id="correctSource" class="text-button" type="button">Corrigir origem</button></div>`
+      : `<div class="detected-source warning"><span class="detected-icon">?</span><div><small>ORIGEM NÃO CONFIRMADA</small><strong>Precisamos de uma confirmação</strong><span>Escolha a conta somente porque este formato ainda não foi reconhecido.</span></div><button id="correctSource" class="text-button" type="button">Escolher origem</button></div>`)
+      : '')
+    const manual = imp.manualSource || (imp.file && !imp.detected)
+      ? `<div class="manual-source"><label class="field-label">Corrigir origem<select id="importAccount"><option value="">Selecione</option>${accounts.map((a) => `<option value="${a.id}" ${a.id === imp.accountId ? 'selected' : ''}>${esc(sourceLabel(a))}</option>`).join('')}</select></label>${imp.detected ? '<button id="useAutomatic" class="text-button" type="button">Usar identificação automática</button>' : ''}</div>`
+      : ''
+    $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="dashboard-grid import-grid"><div class="panel">${panelHead('Envie seu extrato', 'Você não precisa escolher a conta. O sistema identifica a origem automaticamente e mostra a confirmação antes de gravar.')}
+      <label class="dropzone"><div class="drop-icon">⇧</div><strong>${imp.file ? esc(imp.file.name) : 'Escolher arquivo'}</strong><span>${imp.file ? `${(imp.file.size / 1024).toFixed(1)} KB` : 'OFX ou CSV · até 10 MB'}</span><input id="importFile" type="file" accept=".ofx,.csv,text/csv"></label>${detection}${manual}
+      <button id="analyzeBtn" class="button primary full" type="button" ${imp.file ? '' : 'disabled'}>✦ Analisar extrato</button><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></div>
+      <div class="panel">${panelHead('Você só confere o resultado', 'As decisões técnicas ficam com o sistema; você intervém apenas quando algo estiver incerto.')}<div class="check-list">${checkItem('Origem automática', 'Inter Conta e Inter Cartão são reconhecidos pelo conteúdo do arquivo, não pelo nome que você escolhe.')}${checkItem('Duplicidades', 'O mesmo extrato pode ser enviado novamente sem replicar lançamentos.')}${checkItem('Categoria sugerida', 'Você pode corrigir a categoria antes ou depois da importação.')}${checkItem('Compra real', 'Pagamentos do mesmo mercado podem ser agrupados depois da importação.')}</div></div></section></div>`
+    bindImportKindPicker()
+    $('importFile').addEventListener('change', (e) => {
+      imp.file = e.target.files?.[0] || null
+      imp.fileText = ''
+      imp.rows = []
+      imp.message = ''
+      if (imp.file) inspectImportFile(imp.file); else renderImport()
+    })
+    if ($('correctSource')) $('correctSource').addEventListener('click', () => { imp.manualSource = true; renderImport() })
+    if ($('importAccount')) $('importAccount').addEventListener('change', (e) => { imp.accountId = e.target.value })
+    if ($('useAutomatic')) $('useAutomatic').addEventListener('click', () => { const a = findAccountForDetection(imp.detected); imp.accountId = a?.id || ''; imp.manualSource = false; renderImport() })
     $('analyzeBtn').addEventListener('click', analyzeImport)
     return
   }
@@ -872,7 +977,9 @@ function renderImport() {
     const dup = imp.rows.filter((r) => r.duplicate)
     const review = fresh.filter((r) => !r.category_id)
     const filtered = imp.rows.filter((r) => imp.filter === 'all' || (imp.filter === 'review' && !r.duplicate && !r.category_id) || (imp.filter === 'duplicates' && r.duplicate))
-    $('mainArea').innerHTML = `<div class="content-stack">${steps}<section class="panel"><div class="review-head"><div><span class="eyebrow">PRÉVIA DO EXTRATO</span><h2>${fresh.length} novas · ${dup.length} já existentes</h2><p class="muted">Você pode ajustar as categorias agora. A descrição original permanece intacta.</p></div><button id="changeFile" class="button" type="button">Trocar arquivo</button></div><div class="review-summary">${summaryChip('Novas', fresh.length)}${summaryChip('Duplicadas', dup.length)}${summaryChip('Para revisar', review.length)}</div><div class="review-filter"><button class="filter-pill ${imp.filter === 'all' ? 'active' : ''}" data-review-filter="all" type="button">Todas</button><button class="filter-pill ${imp.filter === 'review' ? 'active' : ''}" data-review-filter="review" type="button">Só para revisar</button><button class="filter-pill ${imp.filter === 'duplicates' ? 'active' : ''}" data-review-filter="duplicates" type="button">Duplicadas</button></div><div class="review-table">${filtered.slice(0, 220).map(reviewRow).join('')}</div><div class="review-actions"><span>${review.length ? `${review.length} lançamento(s) podem ser importados e revisados depois.` : 'Todas as novas transações estão categorizadas.'}</span><button id="confirmImport" class="button primary" type="button" ${fresh.length ? '' : 'disabled'}>✓ Importar ${fresh.length} novas</button></div><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></section></div>`
+    const account = state.accounts.find((a) => a.id === imp.accountId)
+    $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="panel"><div class="review-head"><div><span class="eyebrow">PRÉVIA DO EXTRATO</span><h2>${fresh.length} novas · ${dup.length} já existentes</h2><p class="muted">Origem: <strong>${esc(sourceLabel(account))}</strong>. Você pode ajustar categorias agora; a descrição original permanece intacta.</p></div><button id="changeFile" class="button" type="button">Trocar arquivo</button></div><div class="review-summary">${summaryChip('Novas', fresh.length)}${summaryChip('Duplicadas', dup.length)}${summaryChip('Para revisar', review.length)}</div><div class="review-filter"><button class="filter-pill ${imp.filter === 'all' ? 'active' : ''}" data-review-filter="all" type="button">Todas</button><button class="filter-pill ${imp.filter === 'review' ? 'active' : ''}" data-review-filter="review" type="button">Só para revisar</button><button class="filter-pill ${imp.filter === 'duplicates' ? 'active' : ''}" data-review-filter="duplicates" type="button">Duplicadas</button></div><div class="review-table">${filtered.slice(0, 220).map(reviewRow).join('')}</div><div class="review-actions"><span>${review.length ? `${review.length} lançamento(s) podem ser importados e revisados depois.` : 'Todas as novas transações estão categorizadas.'}</span><button id="confirmImport" class="button primary" type="button" ${fresh.length ? '' : 'disabled'}>✓ Importar ${fresh.length} novas</button></div><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></section></div>`
+    bindImportKindPicker()
     $('changeFile').addEventListener('click', () => { imp.step = 1; imp.rows = []; imp.message = ''; renderImport() })
     document.querySelectorAll('[data-review-filter]').forEach((b) => b.addEventListener('click', () => { imp.filter = b.dataset.reviewFilter; renderImport() }))
     document.querySelectorAll('[data-import-cat]').forEach((s) => s.addEventListener('change', () => {
@@ -883,9 +990,10 @@ function renderImport() {
     return
   }
 
-  $('mainArea').innerHTML = `<div class="content-stack">${steps}<section class="panel success-panel"><div class="success-icon">✓</div><h2>Extrato importado.</h2><p>Novas transações foram adicionadas, duplicidades ignoradas e itens incertos ficaram disponíveis na fila de revisão.</p><div class="section-actions" style="justify-content:center"><button id="goTransactions" class="button" type="button">Revisar transações</button><button id="importAgain" class="button primary" type="button">Importar outro extrato</button></div></section></div>`
+  $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="panel success-panel"><div class="success-icon">✓</div><h2>Extrato importado.</h2><p>Novas transações foram adicionadas, duplicidades ignoradas e itens incertos ficaram disponíveis na fila de revisão.</p><div class="section-actions" style="justify-content:center"><button id="goTransactions" class="button" type="button">Revisar transações</button><button id="importAgain" class="button primary" type="button">Importar outro extrato</button></div></section></div>`
+  bindImportKindPicker()
   $('goTransactions').addEventListener('click', () => navigate('transactions'))
-  $('importAgain').addEventListener('click', () => { state.import = { step: 1, accountId: state.accounts[0]?.id || '', file: null, rows: [], message: '', filter: 'all' }; renderImport() })
+  $('importAgain').addEventListener('click', () => { state.import = defaultImportState('bank'); renderImport() })
 }
 function step(n, label, current) { const done = current > Number(n), active = current === Number(n); return `<div class="step ${done ? 'done' : ''} ${active ? 'active' : ''}"><span>${done ? '✓' : n}</span><strong>${esc(label)}</strong></div>` }
 function checkItem(title, text) { return `<div class="check-item"><div>✓</div><p><strong>${esc(title)}</strong><span>${esc(text)}</span></p></div>` }
@@ -896,32 +1004,37 @@ function reviewRow(r) {
 }
 function inferProfile(account, file) {
   const ext = file.name.toLowerCase().split('.').pop()
-  if (account.institution === 'inter' && account.account_type === 'credit_card') return 'inter_card_csv'
-  if (account.institution === 'inter' && account.account_type === 'checking' && ext === 'ofx') return 'inter_ofx'
-  if (account.institution === 'inter' && account.account_type === 'checking') return 'inter_checking_csv'
+  if (account?.institution === 'inter' && account.account_type === 'credit_card') return 'inter_card_csv'
+  if (account?.institution === 'inter' && account.account_type === 'checking' && ext === 'ofx') return 'inter_ofx'
+  if (account?.institution === 'inter' && account.account_type === 'checking') return 'inter_checking_csv'
   return ''
 }
 async function analyzeImport() {
   const imp = state.import
+  if (!imp.file) { imp.message = 'Selecione um arquivo OFX ou CSV.'; renderImport(); return }
+  if (!imp.fileText) imp.fileText = await imp.file.text()
+  if (!imp.detected) imp.detected = detectImportSource(imp.fileText, imp.file)
+  if (!imp.accountId && imp.detected) imp.accountId = findAccountForDetection(imp.detected)?.id || ''
   const account = state.accounts.find((a) => a.id === imp.accountId)
-  if (!imp.file || !account) { imp.message = 'Selecione uma conta e um arquivo.'; renderImport(); return }
-  const profile = inferProfile(account, imp.file)
+  if (!account) { imp.message = 'Não consegui identificar a conta. Clique em “Escolher origem” para corrigir.'; imp.manualSource = true; renderImport(); return }
+  const profile = imp.manualSource ? inferProfile(account, imp.file) : (imp.detected?.profile || inferProfile(account, imp.file))
   if (!profile) {
-    imp.message = account.account_type === 'benefit'
-      ? 'O cartão alimentação já está criado como conta. Para automatizar o extrato, preciso do arquivo exportado pelo app para mapear o formato.'
-      : 'Este formato ainda não está habilitado. Envie um arquivo exportado dessa instituição para eu mapear o parser.'
+    imp.message = account.institution === 'mercado_pago'
+      ? 'Ainda não temos o parser do arquivo exportado pelo Mercado Pago. Quando você enviar um arquivo real desse extrato, eu mapeio o formato.'
+      : 'Esse formato ainda não está habilitado para a origem escolhida.'
     renderImport(); return
   }
   const btn = $('analyzeBtn'); setBusy(btn, true, 'Analisando')
   try {
-    const text = await imp.file.text()
-    const { data, error } = await supabase.functions.invoke('parse-finance-import', { body: { profile, text } })
+    const { data, error } = await supabase.functions.invoke('parse-finance-import', { body: { profile, text: imp.fileText } })
     if (error) throw error
     const parsed = data?.rows || []
     const fps = parsed.map((r) => r.fingerprint)
     const existing = []
     for (let i = 0; i < fps.length; i += 100) {
-      const { data: found, error: e } = await supabase.from('transactions').select('source_fingerprint').in('source_fingerprint', fps.slice(i, i + 100))
+      const chunk = fps.slice(i, i + 100)
+      if (!chunk.length) continue
+      const { data: found, error: e } = await supabase.from('transactions').select('source_fingerprint').in('source_fingerprint', chunk)
       if (e) throw e
       existing.push(...(found || []).map((x) => x.source_fingerprint))
     }
@@ -940,8 +1053,9 @@ async function confirmImport() {
   const btn = $('confirmImport'); setBusy(btn, true, 'Importando')
   try {
     const user = state.session.user
-    const hash = await sha256(await imp.file.text())
-    const { data: batch, error: bErr } = await supabase.from('import_batches').insert({ user_id: user.id, account_id: account.id, file_name: imp.file.name, file_hash: hash, institution: account.institution, source_format: imp.file.name.toLowerCase().endsWith('.ofx') ? 'ofx' : 'csv', status: 'confirmed', row_count: imp.rows.length, duplicate_count: imp.rows.length - fresh.length, review_count: fresh.filter((r) => !r.category_id).length, confirmed_at: new Date().toISOString() }).select('id').single()
+    const fileText = imp.fileText || await imp.file.text()
+    const hash = await sha256(fileText)
+    const { data: batch, error: bErr } = await supabase.from('import_batches').insert({ user_id: user.id, account_id: account.id, file_name: imp.file.name, file_hash: hash, institution: account.institution, source_format: imp.file.name.toLowerCase().endsWith('.ofx') ? 'ofx' : 'csv', status: 'confirmed', row_count: imp.rows.length, duplicate_count: imp.rows.length - fresh.length, review_count: fresh.filter((r) => !r.category_id).length, confirmed_at: new Date().toISOString(), metadata: { detected_source: imp.detected?.label || null, automatic_detection: !imp.manualSource } }).select('id').single()
     if (bErr) { if (bErr.code === '23505') { imp.message = 'Esse arquivo já foi importado anteriormente.'; renderImport(); return } throw bErr }
     const payload = fresh.map((r) => ({ user_id: user.id, account_id: account.id, category_id: r.category_id || null, import_batch_id: batch.id, transaction_date: r.transaction_date, description: r.description, display_description: null, merchant: r.merchant, amount: r.amount, flow_type: r.flow_type, is_internal_transfer: r.is_internal_transfer, include_in_budget: r.include_in_budget, transaction_source: 'import', source_record_id: r.source_record_id, source_fingerprint: r.fingerprint, review_status: r.category_id ? (r.userEdited ? 'reviewed' : 'auto') : 'needs_review', tags: [], metadata: r.raw_data }))
     const { error } = await supabase.from('transactions').insert(payload)
@@ -1000,13 +1114,16 @@ function openBudgetModal() {
   })
 }
 
-function openEntryModal() {
+function openEntryModal(options = {}) {
   const modal = $('modalHost')
-  let mode = 'expense'
+  let mode = options.mode || 'expense'
+  const initialAccountId = options.accountId || ''
+  const initialDescription = options.description || ''
   render()
   function render() {
     const cats = state.categories.filter((c) => mode === 'income' ? c.kind === 'income' : c.kind === 'expense')
-    modal.innerHTML = `<div class="modal-backdrop"><form id="entryForm" class="modal"><div class="modal-head"><div><span class="eyebrow">NOVO LANÇAMENTO</span><h2>Registrar movimentação</h2></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="modal-tabs"><button data-entry-mode="expense" class="${mode === 'expense' ? 'active' : ''}" type="button">Despesa</button><button data-entry-mode="income" class="${mode === 'income' ? 'active' : ''}" type="button">Receita</button><button data-entry-mode="third_party" class="${mode === 'third_party' ? 'active' : ''}" type="button">Pago por terceiro</button></div><div class="form-grid"><label class="field-label">Data<input id="entryDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label><label class="field-label">Valor<input id="entryAmount" inputmode="decimal" placeholder="0,00" required></label><label class="field-label full-span">Descrição<input id="entryDescription" placeholder="${mode === 'third_party' ? 'Ex.: Aluguel + condomínio' : 'Ex.: supermercado'}"></label>${mode !== 'third_party' ? `<label class="field-label">Conta<select id="entryAccount">${state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>` : ''}<label class="field-label">Categoria<select id="entryCategory">${cats.map((c) => `<option value="${c.id}">${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select></label><label class="field-label full-span">Observação<textarea id="entryNotes" placeholder="Opcional"></textarea></label></div>${mode === 'third_party' ? '<div class="third-party-note"><span>⌂</span><span>Esse gasto entra na sua vida financeira real, mas não altera o saldo do Inter, Mercado Pago ou outra conta bancária.</span></div>' : ''}<div id="entryMessage" class="form-message hidden"></div><div class="modal-actions"><span></span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveEntry" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
+    const availableAccounts = mode === 'third_party' ? [] : state.accounts
+    modal.innerHTML = `<div class="modal-backdrop"><form id="entryForm" class="modal"><div class="modal-head"><div><span class="eyebrow">NOVO LANÇAMENTO</span><h2>Registrar movimentação</h2></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="modal-tabs"><button data-entry-mode="expense" class="${mode === 'expense' ? 'active' : ''}" type="button">Despesa</button><button data-entry-mode="income" class="${mode === 'income' ? 'active' : ''}" type="button">Receita</button><button data-entry-mode="third_party" class="${mode === 'third_party' ? 'active' : ''}" type="button">Pago por terceiro</button></div><div class="form-grid"><label class="field-label">Data<input id="entryDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label><label class="field-label">Valor<input id="entryAmount" inputmode="decimal" placeholder="0,00" required></label><label class="field-label full-span">Descrição<input id="entryDescription" value="${esc(initialDescription)}" placeholder="${mode === 'third_party' ? 'Ex.: Aluguel + condomínio' : 'Ex.: supermercado'}"></label>${mode !== 'third_party' ? `<label class="field-label">Conta<select id="entryAccount">${availableAccounts.map((a) => `<option value="${a.id}" ${a.id === initialAccountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>` : ''}<label class="field-label">Categoria<select id="entryCategory">${cats.map((c) => `<option value="${c.id}">${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select></label><label class="field-label full-span">Observação<textarea id="entryNotes" placeholder="Opcional"></textarea></label></div>${mode === 'third_party' ? '<div class="third-party-note"><span>⌂</span><span>Esse gasto entra na sua vida financeira real, mas não altera o saldo do Inter, Mercado Pago ou outra conta bancária.</span></div>' : ''}<div id="entryMessage" class="form-message hidden"></div><div class="modal-actions"><span></span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveEntry" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
     $('closeModal').addEventListener('click', close); $('cancelModal').addEventListener('click', close)
     modal.querySelectorAll('[data-entry-mode]').forEach((b) => b.addEventListener('click', () => { mode = b.dataset.entryMode; render() }))
     $('entryForm').addEventListener('submit', save)
