@@ -55,7 +55,8 @@ const state = {
   investmentPositions: [],
   investmentGoals: [],
   investmentMovements: [],
-  investmentSnapshots: []
+  investmentSnapshots: [],
+  transactionDrilldown: null
 }
 
 function esc(v = '') {
@@ -148,8 +149,11 @@ function bindGlobalEvents() {
     $('togglePassword').textContent = show ? 'Ocultar' : 'Mostrar'
   })
   document.querySelectorAll('[data-auth]').forEach((b) => b.addEventListener('click', () => setAuthMode(b.dataset.auth)))
-  document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => navigate(b.dataset.view)))
-  $('monthPicker').addEventListener('change', () => { state.month = $('monthPicker').value; state.selectedTx.clear(); loadData() })
+  document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.view === 'transactions') state.transactionDrilldown = null
+    navigate(b.dataset.view)
+  }))
+  $('monthPicker').addEventListener('change', () => { state.month = $('monthPicker').value; state.selectedTx.clear(); state.transactionDrilldown = null; loadData() })
   $('viewModeBtn').addEventListener('click', () => {
     state.realView = !state.realView
     $('viewModeBtn').textContent = state.realView ? 'Visão real' : 'Contas bancárias'
@@ -437,6 +441,7 @@ function renderOverview() {
   $('insightReview')?.addEventListener('click', () => { state.view = 'transactions'; navigate('transactions'); setTimeout(() => document.querySelector('[data-filter="needs_review"]')?.click(), 0) })
   $('insightPurchases')?.addEventListener('click', () => navigate('purchases'))
   $('insightBenefit')?.addEventListener('click', () => navigate('accounts'))
+  document.querySelectorAll('[data-category-group]').forEach((b) => b.addEventListener('click', () => openCategoryTransactions(b.dataset.categoryGroup)))
   bindTransactionOpeners()
 }
 
@@ -463,7 +468,12 @@ function lineChart(values) {
 }
 function categoryBars(cats) {
   const max = cats[0]?.[1] || 1
-  return `<div class="category-bars">${cats.map(([n, v], i) => `<div><div class="cat-line"><span>${esc(n)}</span><strong>${money.format(v)}</strong></div><div class="cat-track"><div class="cat-fill shade-${i}" style="width:${Math.max(3, v / max * 100)}%"></div></div></div>`).join('')}</div>`
+  return `<div class="category-bars">${cats.map(([n, v], i) => `<button class="category-bar-button" data-category-group="${esc(n)}" type="button" title="Ver lançamentos de ${esc(n)}"><div class="cat-line"><span>${esc(n)}</span><strong>${money.format(v)}</strong></div><div class="cat-track"><div class="cat-fill shade-${i}" style="width:${Math.max(3, v / max * 100)}%"></div></div><small>Ver lançamentos</small></button>`).join('')}</div>`
+}
+
+function openCategoryTransactions(groupName) {
+  state.transactionDrilldown = { group: groupName || null, categoryId: null }
+  navigate('transactions')
 }
 function accountIcon(a) {
   const cls = a.account_type === 'benefit' ? 'benefit' : a.account_type === 'virtual' ? 'virtual' : ''
@@ -498,21 +508,25 @@ function renderTransactions() {
     <section class="panel">
       <div class="toolbar"><label class="search-box">⌕<input id="txSearch" placeholder="Buscar descrição, estabelecimento ou tag"></label><select id="txAccount"><option value="">Todas as contas</option>${state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select><select id="txCategory"><option value="">Todas as categorias</option>${state.categories.map((c) => `<option value="${c.id}">${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select></div>
       <div class="filter-pills"><button class="filter-pill active" data-filter="all" type="button">Todas</button><button class="filter-pill" data-filter="needs_review" type="button">Precisa revisar</button><button class="filter-pill" data-filter="expense" type="button">Despesas</button><button class="filter-pill" data-filter="income" type="button">Receitas</button><button class="filter-pill" data-filter="grouped" type="button">Compras agrupadas</button></div>
-      <div id="selectionBar"></div><div id="txList" class="tx-table"></div>
+      <div id="drilldownFilter"></div><div id="selectionBar"></div><div id="txList" class="tx-table"></div>
     </section>
   </div>`
 
   let filter = 'all'
+  if (state.transactionDrilldown?.categoryId) $('txCategory').value = state.transactionDrilldown.categoryId
   const draw = () => {
     const q = $('txSearch').value.trim().toLowerCase()
     const acc = $('txAccount').value
     const cat = $('txCategory').value
+    const group = state.transactionDrilldown?.group || ''
     const rows = state.transactions.filter((t) => {
       const hay = `${displayDescription(t)} ${t.description || ''} ${t.merchant || ''} ${(t.tags || []).join(' ')}`.toLowerCase()
       const statusMatch = filter === 'all' || (filter === 'needs_review' && t.review_status === 'needs_review') || (filter === 'expense' && t.flow_type === 'expense') || (filter === 'income' && ['income', 'yield'].includes(t.flow_type)) || (filter === 'grouped' && !!t.purchase_id)
-      return (!q || hay.includes(q)) && (!acc || t.account_id === acc) && (!cat || t.category_id === cat) && statusMatch
+      const txGroup = t.categories?.group_name || categoryById(t.category_id)?.group_name || ''
+      return (!q || hay.includes(q)) && (!acc || t.account_id === acc) && (!cat || t.category_id === cat) && (!group || txGroup === group) && statusMatch
     })
     $('txList').innerHTML = rows.length ? rows.map((t) => transactionRow(t, { selectMode: state.selectionMode })).join('') : empty('Nenhuma transação com esses filtros.')
+    renderDrilldownFilter(rows.length)
     renderSelectionBar()
     bindTransactionOpeners()
     document.querySelectorAll('[data-select-tx]').forEach((c) => c.addEventListener('change', (e) => {
@@ -521,6 +535,18 @@ function renderTransactions() {
       renderSelectionBar()
     }))
   }
+  const renderDrilldownFilter = (count) => {
+    const host = $('drilldownFilter')
+    if (!host) return
+    const group = state.transactionDrilldown?.group
+    const categoryId = state.transactionDrilldown?.categoryId
+    const cat = categoryId ? categoryById(categoryId) : null
+    const label = cat ? `${cat.group_name} · ${cat.name}` : group
+    if (!label) { host.innerHTML = ''; return }
+    host.innerHTML = `<div class="drilldown-banner"><div><span>Filtro vindo do dashboard</span><strong>${esc(label)}</strong><small>${count} lançamento(s) neste mês</small></div><button id="clearDrilldown" class="button small" type="button">× Limpar filtro</button></div>`
+    $('clearDrilldown')?.addEventListener('click', () => { state.transactionDrilldown = null; $('txCategory').value = ''; draw() })
+  }
+
   const renderSelectionBar = () => {
     if (!state.selectionMode) { $('selectionBar').innerHTML = ''; return }
     $('selectionBar').innerHTML = `<div class="selection-bar"><span>${state.selectedTx.size ? `${state.selectedTx.size} pagamento(s) selecionado(s)` : 'Selecione dois ou mais pagamentos da mesma compra'}</span><div class="selection-actions"><button id="cancelSelection" class="button small" type="button">Cancelar</button><button id="confirmGroup" class="button primary small" type="button" ${state.selectedTx.size >= 2 ? '' : 'disabled'}>Agrupar como compra</button></div></div>`
@@ -530,7 +556,11 @@ function renderTransactions() {
 
   $('txSearch').addEventListener('input', draw)
   $('txAccount').addEventListener('change', draw)
-  $('txCategory').addEventListener('change', draw)
+  $('txCategory').addEventListener('change', () => {
+    const id = $('txCategory').value
+    state.transactionDrilldown = id ? { group: null, categoryId: id } : null
+    draw()
+  })
   document.querySelectorAll('[data-filter]').forEach((b) => b.addEventListener('click', () => {
     filter = b.dataset.filter
     document.querySelectorAll('[data-filter]').forEach((x) => x.classList.toggle('active', x === b))

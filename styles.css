@@ -147,3 +147,41 @@ input:focus,select:focus,textarea:focus,button:focus-visible{box-shadow:0 0 0 3p
 @media(max-width:620px){.document-batch-head{align-items:flex-start;flex-direction:column}.document-batch-head select{width:100%;min-width:0}}
 .modal-actions-left{display:flex;gap:8px;flex-wrap:wrap}
 @media(max-width:620px){.modal-actions-left{display:grid;grid-template-columns:1fr}.modal-actions-left .button{width:100%}}
+
+/* Category drill-down */
+.category-bar-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 7px 8px 9px;
+  margin: 0 -8px;
+  border-radius: 12px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background .16s ease, transform .16s ease;
+}
+.category-bar-button:hover { background: #f4f6f4; transform: translateX(2px); }
+.category-bar-button:focus-visible { outline: 2px solid #102535; outline-offset: 2px; }
+.category-bar-button small { display: block; margin-top: 5px; color: #84908a; font-size: 10px; opacity: 0; transition: opacity .16s ease; }
+.category-bar-button:hover small, .category-bar-button:focus-visible small { opacity: 1; }
+.drilldown-banner {
+  margin: 12px 0 4px;
+  padding: 11px 12px;
+  border: 1px solid #dfe5e1;
+  border-radius: 12px;
+  background: #f7f9f7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.drilldown-banner > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; }
+.drilldown-banner span, .drilldown-banner small { color: #7f8984; font-size: 11px; }
+.drilldown-banner strong { font-size: 12px; color: #102535; }
+@media (max-width: 720px) {
+  .category-bar-button small { opacity: 1; }
+  .drilldown-banner { align-items: flex-start; }
+  .drilldown-banner > div { display: grid; gap: 2px; }
+}
