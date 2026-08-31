@@ -139,3 +139,9 @@ input:focus,select:focus,textarea:focus,button:focus-visible{box-shadow:0 0 0 3p
 .privacy-note strong{font-size:12px}.privacy-note span{font-size:11px;color:var(--muted);line-height:1.5}
 @media(max-width:900px){.document-row{grid-template-columns:1fr 1fr}.document-row input[data-doc-desc]{grid-column:1/-1}.document-row .icon-button{justify-self:end}}
 @media(max-width:560px){.document-row{grid-template-columns:1fr}.document-row input[data-doc-desc]{grid-column:auto}.document-row .icon-button{justify-self:start}}
+
+/* Document batch import */
+.document-batch-detail{margin-top:14px;padding:14px;border:1px solid var(--border);border-radius:15px;background:#fbfcfb}
+.document-batch-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.document-batch-head>div{display:flex;flex-direction:column;gap:2px;min-width:0}.document-batch-head small{font-size:9px;color:var(--muted);letter-spacing:.08em}.document-batch-head strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-batch-head select{height:36px;min-width:210px;border:1px solid var(--border);border-radius:9px;background:white;padding:0 8px;font:inherit;font-size:10.5px;color:var(--ink)}
+@media(max-width:620px){.document-batch-head{align-items:flex-start;flex-direction:column}.document-batch-head select{width:100%;min-width:0}}

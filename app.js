@@ -1004,7 +1004,21 @@ function bindImportKindPicker() {
 }
 
 function defaultDocumentState() {
-  return { file: null, hint: 'auto', status: 'idle', message: '', progress: '', text: '', detectedType: '', rows: [], balance: null, benchmark: null }
+  return { files: [], hint: 'auto', message: '', progress: '' }
+}
+function defaultDocumentEntry(file, hint = 'auto') {
+  return { id: `doc-${Date.now()}-${Math.random().toString(36).slice(2,8)}`, file, hint, status: 'idle', message: '', progress: '', text: '', detectedType: '', rows: [], balance: null, benchmark: null }
+}
+function addDocumentFiles(fileList) {
+  const imp=state.import; imp.document ??= defaultDocumentState(); const doc=imp.document
+  const files=[...(fileList||[])]; if(!files.length)return
+  const accepted=files.filter((f)=>/\.(pdf|jpe?g|png)$/i.test(f.name) || ['application/pdf','image/jpeg','image/png'].includes(f.type))
+  const rejected=files.length-accepted.length
+  const existing=new Set(doc.files.map((x)=>`${x.file.name}|${x.file.size}|${x.file.lastModified}`))
+  let added=0
+  for(const file of accepted){ const key=`${file.name}|${file.size}|${file.lastModified}`; if(existing.has(key))continue; doc.files.push(defaultDocumentEntry(file,doc.hint)); existing.add(key); added++ }
+  doc.message=rejected?`${rejected} arquivo(s) ignorado(s). Use PDF, JPG ou PNG.`:(added?`${added} arquivo(s) adicionado(s).`:'Esses arquivos já estão no lote.')
+  renderImport()
 }
 function documentTypeLabel(type) {
   return ({ third_party:'Pagamento por terceiro', cofrinho:'Mercado Pago · Cofrinho', benefit:'Cartão alimentação', receipt:'Nota fiscal', bank_pdf:'Extrato em PDF', other:'Documento não identificado' })[type] || 'Documento'
@@ -1122,38 +1136,53 @@ function parseDocument(text,type) {
   if (type==='benefit') return { rows:parseBenefitDocument(text) }
   return { rows:[] }
 }
-function documentRowHtml(row,index,type) {
+function documentRowHtml(row,index,type,entryId) {
   const typeOptions = type==='cofrinho'
     ? [['contribution','Aporte / reservado'],['withdrawal','Resgate / retirado'],['income','Rendimento']]
     : type==='benefit' ? [['benefit_credit','Crédito do benefício'],['expense','Compra']] : [['third_party','Despesa paga por terceiro']]
-  return `<div class="document-row"><input data-doc-date="${index}" type="date" value="${esc(row.date||'')}"><select data-doc-type="${index}">${typeOptions.map(([v,l])=>`<option value="${v}" ${row.type===v?'selected':''}>${l}</option>`).join('')}</select><input data-doc-desc="${index}" value="${esc(row.description||'')}" placeholder="Descrição"><input data-doc-amount="${index}" inputmode="decimal" value="${num(row.amount).toLocaleString('pt-BR',{minimumFractionDigits:2})}" placeholder="0,00"><button data-doc-remove="${index}" class="icon-button" type="button" title="Remover">×</button></div>`
+  return `<div class="document-row"><input data-doc-entry="${entryId}" data-doc-date="${index}" type="date" value="${esc(row.date||'')}"><select data-doc-entry="${entryId}" data-doc-type="${index}">${typeOptions.map(([v,l])=>`<option value="${v}" ${row.type===v?'selected':''}>${l}</option>`).join('')}</select><input data-doc-entry="${entryId}" data-doc-desc="${index}" value="${esc(row.description||'')}" placeholder="Descrição"><input data-doc-entry="${entryId}" data-doc-amount="${index}" inputmode="decimal" value="${num(row.amount).toLocaleString('pt-BR',{minimumFractionDigits:2})}" placeholder="0,00"><button data-doc-remove="${entryId}:${index}" class="icon-button" type="button" title="Remover">×</button></div>`
 }
-function syncDocumentRowsFromDom(doc) {
-  doc.rows.forEach((r,i)=>{
-    const d=document.querySelector(`[data-doc-date="${i}"]`); const t=document.querySelector(`[data-doc-type="${i}"]`); const desc=document.querySelector(`[data-doc-desc="${i}"]`); const a=document.querySelector(`[data-doc-amount="${i}"]`)
+function syncDocumentRowsFromDom(entry) {
+  entry.rows.forEach((r,i)=>{
+    const q=(attr)=>document.querySelector(`[data-doc-entry="${entry.id}"][${attr}="${i}"]`)
+    const d=q('data-doc-date'); const t=q('data-doc-type'); const desc=q('data-doc-desc'); const a=q('data-doc-amount')
     if(d)r.date=d.value; if(t)r.type=t.value; if(desc)r.description=desc.value; if(a)r.amount=Math.abs(parseMoneyInput(a.value)||0)
   })
 }
-async function analyzeFinancialDocument() {
+function removeDocumentFile(id) {
+  const doc=state.import?.document; if(!doc)return
+  doc.files=doc.files.filter((x)=>x.id!==id); renderImport()
+}
+function reparseDocumentEntry(entry) {
+  entry.detectedType=entry.hint==='auto'?detectDocumentType(entry.text,'auto'):entry.hint
+  const parsed=parseDocument(entry.text,entry.detectedType)
+  entry.rows=parsed.rows||[]; entry.balance=parsed.balance??null; entry.benchmark=parsed.benchmark??null; entry.status='parsed'; entry.message=''
+  if (!entry.rows.length && entry.detectedType!=='receipt' && !(entry.detectedType==='cofrinho' && entry.balance!=null)) entry.message='Arquivo lido, mas sem movimentações identificadas com segurança. Você pode adicionar linhas manualmente.'
+}
+async function analyzeFinancialDocuments() {
   const imp=state.import; imp.document ??= defaultDocumentState(); const doc=imp.document
-  if (!doc.file) { doc.message='Escolha um PDF, JPG ou PNG primeiro.'; renderImport(); return }
-  const btn=$('analyzeDocumentBtn'); setBusy(btn,true,'Lendo documento')
+  if (!doc.files.length) { doc.message='Escolha um ou mais PDFs, JPGs ou PNGs primeiro.'; renderImport(); return }
+  const btn=$('analyzeDocumentBtn'); setBusy(btn,true,'Lendo documentos')
+  let ok=0, failed=0
   try {
-    doc.message=''; doc.progress='Preparando leitura…'; renderDocumentProgressOnly(doc)
-    const text=await extractDocumentText(doc.file,(pct)=>{ doc.progress=`Lendo conteúdo… ${pct}%`; renderDocumentProgressOnly(doc) })
-    doc.text=text; doc.detectedType=detectDocumentType(text,doc.hint)
-    const parsed=parseDocument(text,doc.detectedType); doc.rows=parsed.rows||[]; doc.balance=parsed.balance??null; doc.benchmark=parsed.benchmark??null; doc.status='parsed'; doc.progress=''
-    if (!doc.rows.length && doc.detectedType!=='receipt' && !(doc.detectedType==='cofrinho' && doc.balance)) doc.message='Consegui ler o arquivo, mas não identifiquei movimentações com segurança. Você pode adicionar linhas manualmente abaixo.'
-    renderImport()
-  } catch(err) { doc.status='error'; doc.message=humanError(err); doc.progress=''; renderImport() }
-  finally { setBusy($('analyzeDocumentBtn'),false) }
+    doc.message='';
+    for (let i=0;i<doc.files.length;i++) {
+      const entry=doc.files[i]
+      entry.status='reading'; entry.message=''; entry.progress='Preparando leitura…'; doc.progress=`Documento ${i+1} de ${doc.files.length}: ${entry.file.name}`; renderDocumentProgressOnly(doc)
+      try {
+        const text=await extractDocumentText(entry.file,(pct)=>{ entry.progress=`${pct}%`; doc.progress=`Documento ${i+1} de ${doc.files.length}: ${entry.file.name} · ${pct}%`; renderDocumentProgressOnly(doc) })
+        entry.text=text; entry.hint=entry.hint||doc.hint||'auto'; reparseDocumentEntry(entry); entry.progress=''; ok++
+      } catch(err) { entry.status='error'; entry.message=humanError(err); entry.progress=''; failed++ }
+    }
+    doc.progress=''; doc.message=failed?`${ok} documento(s) lido(s); ${failed} precisam de atenção.`:`${ok} documento(s) prontos para conferência.`; renderImport()
+  } finally { setBusy($('analyzeDocumentBtn'),false) }
 }
 function renderDocumentProgressOnly(doc) { const el=$('documentProgress'); if(el){el.textContent=doc.progress||''; setHidden(el,!doc.progress)} }
-async function uploadDocumentFile(doc) {
-  const user=state.session.user; const safe=doc.file.name.replace(/[^a-zA-Z0-9._-]+/g,'-'); const path=`${user.id}/documents/${Date.now()}-${safe}`
-  const { error:upErr }=await supabase.storage.from('finance-files').upload(path,doc.file,{upsert:false,contentType:doc.file.type||undefined}); if(upErr)throw upErr
-  const account = doc.detectedType==='cofrinho' ? state.accounts.find((a)=>a.name==='Mercado Pago - Cofrinho') : doc.detectedType==='benefit' ? benefitAccount() : null
-  const { data,error }=await supabase.from('financial_documents').insert({user_id:user.id,account_id:account?.id||null,file_name:doc.file.name,storage_path:path,mime_type:doc.file.type||null,document_type:doc.detectedType||'other',parse_status:'parsed',extracted_text:(doc.text||'').slice(0,50000),extracted_data:{rows:doc.rows,balance:doc.balance,benchmark:doc.benchmark}}).select().single(); if(error)throw error
+async function uploadDocumentFile(entry) {
+  const user=state.session.user; const safe=entry.file.name.replace(/[^a-zA-Z0-9._-]+/g,'-'); const path=`${user.id}/documents/${Date.now()}-${Math.random().toString(36).slice(2,7)}-${safe}`
+  const { error:upErr }=await supabase.storage.from('finance-files').upload(path,entry.file,{upsert:false,contentType:entry.file.type||undefined}); if(upErr)throw upErr
+  const account = entry.detectedType==='cofrinho' ? state.accounts.find((a)=>a.name==='Mercado Pago - Cofrinho') : entry.detectedType==='benefit' ? benefitAccount() : null
+  const { data,error }=await supabase.from('financial_documents').insert({user_id:user.id,account_id:account?.id||null,file_name:entry.file.name,storage_path:path,mime_type:entry.file.type||null,document_type:entry.detectedType||'other',parse_status:'parsed',extracted_text:(entry.text||'').slice(0,50000),extracted_data:{rows:entry.rows,balance:entry.balance,benchmark:entry.benchmark}}).select().single(); if(error)throw error
   return data
 }
 async function ensureCofrinhoPosition() {
@@ -1162,66 +1191,98 @@ async function ensureCofrinhoPosition() {
   let p=state.investmentPositions.find((x)=>x.account_id===account.id && /cofrinho/i.test(x.name))
   if(p) return p
   const {data,error}=await supabase.from('investment_positions').insert({user_id:state.session.user.id,account_id:account.id,name:'Mercado Pago · Cofrinho',asset_type:'cash_reserve',benchmark:'120% do CDI',liquidity_label:'Liquidez diária',invested_amount:0,current_value:0,metadata:{source:'document_import'}}).select().single(); if(error)throw error
+  state.investmentPositions.push(data)
   return data
 }
-async function confirmFinancialDocument() {
-  const doc=state.import?.document; if(!doc?.file) return
-  syncDocumentRowsFromDom(doc)
-  const btn=$('confirmDocumentBtn'); setBusy(btn,true,'Salvando')
-  try {
-    const user=state.session.user
-    if (doc.detectedType==='third_party') {
-      const r=doc.rows[0]; if(!r?.date||!r.amount) throw new Error('Revise data e valor antes de confirmar.')
-      const selectedCatId=$('documentThirdPartyCategory')?.value
-      const cat=state.categories.find((c)=>c.id===selectedCatId) || state.categories.find((c)=>c.kind==='expense' && c.name==='Aluguel + condomínio') || state.categories.find((c)=>c.kind==='expense' && c.group_name==='Moradia')
-      if(!cat) throw new Error('Categoria de despesa não encontrada.')
-      const {error}=await supabase.rpc('record_third_party_expense',{p_date:r.date,p_amount:r.amount,p_description:r.description||'Pagamento por terceiro',p_category_id:cat.id,p_notes:`Importado de ${doc.file.name}`}); if(error)throw error
-    } else if (doc.detectedType==='cofrinho') {
-      const pos=await ensureCofrinhoPosition(); const account=state.accounts.find((a)=>a.id===pos.account_id)
-      for (const r of doc.rows.filter((x)=>x.date&&x.amount)) {
-        const {data:exists,error:qErr}=await supabase.from('investment_movements').select('id').eq('position_id',pos.id).eq('movement_date',r.date).eq('movement_type',r.type).eq('amount',r.amount).limit(1); if(qErr)throw qErr
-        if(!exists?.length){ const {error}=await supabase.from('investment_movements').insert({user_id:user.id,position_id:pos.id,account_id:account.id,movement_date:r.date,movement_type:r.type,amount:r.amount,notes:r.description||null,metadata:{source:'cofrinho_print'}}); if(error)throw error }
-      }
-      if(doc.balance!=null){ const invested=Math.max(0,num(pos.invested_amount)); const {error}=await supabase.from('investment_positions').update({current_value:doc.balance,benchmark:doc.benchmark||pos.benchmark||null}).eq('id',pos.id); if(error)throw error; const {error:sErr}=await supabase.from('investment_snapshots').upsert({user_id:user.id,position_id:pos.id,snapshot_date:new Date().toISOString().slice(0,10),invested_principal:invested,market_value:doc.balance},{onConflict:'position_id,snapshot_date'}); if(sErr)throw sErr }
-    } else if (doc.detectedType==='benefit') {
-      const account=benefitAccount(); if(!account)throw new Error('Conta Cartão Alimentação não encontrada.')
-      const expenseCat=state.categories.find((c)=>c.kind==='expense'&&c.name==='Mercado') || state.categories.find((c)=>c.kind==='expense'&&c.group_name==='Alimentação')
-      const incomeCat=state.categories.find((c)=>c.kind==='income'&&c.name==='Outras receitas') || state.categories.find((c)=>c.kind==='income')
-      const payload=[]
-      for(const r of doc.rows.filter((x)=>x.date&&x.amount)) {
-        const credit=r.type==='benefit_credit'; payload.push({user_id:user.id,account_id:account.id,category_id:credit?incomeCat?.id:expenseCat?.id,transaction_date:r.date,description:r.description|| (credit?'Crédito do benefício':'Compra com cartão alimentação'),amount:credit?Math.abs(r.amount):-Math.abs(r.amount),flow_type:credit?'income':'expense',is_internal_transfer:false,include_in_budget:!credit,transaction_source:'receipt',review_status:credit?'reviewed':'auto',metadata:{source:'benefit_print'}})
-      }
-      if(payload.length){ const {error}=await supabase.from('transactions').insert(payload); if(error)throw error }
-    } else if (doc.detectedType==='receipt') {
-      await uploadDocumentFile(doc); toast('Nota fiscal salva. Para vinculá-la, abra a compra correspondente em Compras.', 'success'); state.import=defaultImportState('document'); await loadData(); return
-    } else throw new Error('Escolha o tipo do documento antes de confirmar.')
-    await uploadDocumentFile(doc)
-    toast('Documento e informações salvos.', 'success'); state.import=defaultImportState('document'); await loadData(); navigate(doc.detectedType==='cofrinho'?'investments':'overview')
-  } catch(err){ doc.message=humanError(err); renderImport() }
-  finally { setBusy($('confirmDocumentBtn'),false) }
+async function refreshCofrinhoPrincipal(positionId) {
+  const {data,error}=await supabase.from('investment_movements').select('movement_type,amount').eq('position_id',positionId); if(error)throw error
+  const principal=(data||[]).reduce((sum,m)=>sum+(m.movement_type==='contribution'||m.movement_type==='transfer_in'?num(m.amount):m.movement_type==='withdrawal'||m.movement_type==='transfer_out'?-num(m.amount):0),0)
+  const {error:uErr}=await supabase.from('investment_positions').update({invested_amount:Math.max(0,principal)}).eq('id',positionId); if(uErr)throw uErr
+  return Math.max(0,principal)
+}
+async function saveFinancialDocumentEntry(entry) {
+  syncDocumentRowsFromDom(entry)
+  const user=state.session.user
+  if (entry.detectedType==='third_party') {
+    const r=entry.rows[0]; if(!r?.date||!r.amount) throw new Error('Revise data e valor antes de confirmar.')
+    const selectedCatId=document.querySelector(`[data-doc-third-cat="${entry.id}"]`)?.value
+    const cat=state.categories.find((c)=>c.id===selectedCatId) || state.categories.find((c)=>c.kind==='expense' && c.name==='Aluguel + condomínio') || state.categories.find((c)=>c.kind==='expense' && c.group_name==='Moradia')
+    if(!cat) throw new Error('Categoria de despesa não encontrada.')
+    const virtual=state.accounts.find((a)=>a.account_type==='virtual')
+    if(virtual){ const {data:exists,error:qErr}=await supabase.from('transactions').select('id').eq('account_id',virtual.id).eq('transaction_date',r.date).eq('flow_type','expense').eq('amount',-Math.abs(r.amount)).limit(1); if(qErr)throw qErr; if(!exists?.length){ const {error}=await supabase.rpc('record_third_party_expense',{p_date:r.date,p_amount:r.amount,p_description:r.description||'Pagamento por terceiro',p_category_id:cat.id,p_notes:`Importado de ${entry.file.name}`}); if(error)throw error } }
+    else { const {error}=await supabase.rpc('record_third_party_expense',{p_date:r.date,p_amount:r.amount,p_description:r.description||'Pagamento por terceiro',p_category_id:cat.id,p_notes:`Importado de ${entry.file.name}`}); if(error)throw error }
+  } else if (entry.detectedType==='cofrinho') {
+    const pos=await ensureCofrinhoPosition(); const account=state.accounts.find((a)=>a.id===pos.account_id)
+    for (const r of entry.rows.filter((x)=>x.date&&x.amount)) {
+      const {data:exists,error:qErr}=await supabase.from('investment_movements').select('id').eq('position_id',pos.id).eq('movement_date',r.date).eq('movement_type',r.type).eq('amount',r.amount).limit(1); if(qErr)throw qErr
+      if(!exists?.length){ const {error}=await supabase.from('investment_movements').insert({user_id:user.id,position_id:pos.id,account_id:account.id,movement_date:r.date,movement_type:r.type,amount:r.amount,notes:r.description||null,metadata:{source:'cofrinho_print',file_name:entry.file.name}}); if(error)throw error }
+    }
+    const invested=await refreshCofrinhoPrincipal(pos.id)
+    if(entry.balance!=null){ const snapshotDate=[...entry.rows.map((x)=>x.date).filter(Boolean)].sort().at(-1) || new Date().toISOString().slice(0,10); const {error}=await supabase.from('investment_positions').update({current_value:entry.balance,benchmark:entry.benchmark||pos.benchmark||null,invested_amount:invested}).eq('id',pos.id); if(error)throw error; const {error:sErr}=await supabase.from('investment_snapshots').upsert({user_id:user.id,position_id:pos.id,snapshot_date:snapshotDate,invested_principal:invested,market_value:entry.balance},{onConflict:'position_id,snapshot_date'}); if(sErr)throw sErr }
+  } else if (entry.detectedType==='benefit') {
+    const account=benefitAccount(); if(!account)throw new Error('Conta Cartão Alimentação não encontrada.')
+    const expenseCat=state.categories.find((c)=>c.kind==='expense'&&c.name==='Mercado') || state.categories.find((c)=>c.kind==='expense'&&c.group_name==='Alimentação')
+    const incomeCat=state.categories.find((c)=>c.kind==='income'&&c.name==='Outras receitas') || state.categories.find((c)=>c.kind==='income')
+    for(const r of entry.rows.filter((x)=>x.date&&x.amount)) {
+      const credit=r.type==='benefit_credit'; const amount=credit?Math.abs(r.amount):-Math.abs(r.amount); const description=r.description|| (credit?'Crédito do benefício':'Compra com cartão alimentação')
+      const {data:exists,error:qErr}=await supabase.from('transactions').select('id').eq('account_id',account.id).eq('transaction_date',r.date).eq('amount',amount).eq('description',description).limit(1); if(qErr)throw qErr
+      if(!exists?.length){ const {error}=await supabase.from('transactions').insert({user_id:user.id,account_id:account.id,category_id:credit?incomeCat?.id:expenseCat?.id,transaction_date:r.date,description,amount,flow_type:credit?'income':'expense',is_internal_transfer:false,include_in_budget:!credit,transaction_source:'receipt',review_status:credit?'reviewed':'auto',metadata:{source:'benefit_print',file_name:entry.file.name}}); if(error)throw error }
+    }
+  } else if (entry.detectedType!=='receipt') throw new Error('Escolha o tipo do documento antes de confirmar.')
+  await uploadDocumentFile(entry)
+}
+async function confirmFinancialDocuments() {
+  const doc=state.import?.document; if(!doc?.files?.length)return
+  const ready=doc.files.filter((x)=>x.status==='parsed'); if(!ready.length){doc.message='Analise os documentos antes de confirmar.';renderImport();return}
+  const btn=$('confirmDocumentBtn'); setBusy(btn,true,'Salvando lote')
+  let saved=0,failed=0
+  for(const entry of ready){
+    try{ await saveFinancialDocumentEntry(entry); entry.status='saved'; entry.message='Salvo'; saved++ }
+    catch(err){ entry.status='error'; entry.message=humanError(err); failed++ }
+  }
+  try{
+    doc.message=failed?`${saved} documento(s) salvos; ${failed} precisam de correção.`:`${saved} documento(s) salvos com sucesso.`
+    await loadData()
+    if(!failed){ toast(`${saved} documento(s) processados com sucesso.`, 'success'); state.import=defaultImportState('document'); navigate(ready.some((x)=>x.detectedType==='cofrinho')?'investments':'overview') }
+    else renderImport()
+  } finally { setBusy($('confirmDocumentBtn'),false) }
+}
+function renderDocumentFileHeader(entry) {
+  const status=entry.status==='parsed'?'✓':entry.status==='error'?'!':entry.status==='reading'?'…':'•'
+  const cls=entry.status==='parsed'?'success':entry.status==='error'?'error':''
+  const label=entry.detectedType?documentTypeLabel(entry.detectedType):'Aguardando análise'
+  return `<div class="batch-file-card ${cls}"><div class="batch-file-status">${status}</div><div class="batch-file-main"><strong>${esc(entry.file.name)}</strong><span>${(entry.file.size/1024).toFixed(1)} KB · ${esc(label)}</span>${entry.message?`<div class="batch-file-message">${esc(entry.message)}</div>`:''}</div><div class="batch-file-actions"><button class="icon-button" data-doc-file-remove="${entry.id}" type="button" title="Remover">×</button></div></div>`
+}
+function renderDocumentDetail(entry,expenseCats) {
+  if(entry.status!=='parsed')return ''
+  const type=entry.detectedType
+  const typeOptions=[['auto','Identificar automaticamente'],['cofrinho','Mercado Pago · Cofrinho'],['third_party','Pagamento por terceiro'],['benefit','Cartão alimentação'],['receipt','Nota fiscal / cupom']]
+  return `<div class="document-batch-detail"><div class="document-batch-head"><div><small>CONFERÊNCIA</small><strong>${esc(entry.file.name)}</strong></div><select data-doc-file-type="${entry.id}">${typeOptions.map(([v,l])=>`<option value="${v}" ${(entry.hint==='auto'?type:entry.hint)===v || (v===type&&entry.hint==='auto')?'selected':''}>${l}</option>`).join('')}</select></div>
+    ${type==='receipt'?'<div class="batch-empty-note">A nota será guardada de forma privada. Depois, abra a compra correspondente em <strong>Compras</strong> para vinculá-la e detalhar os itens.</div>':`<div class="document-rows">${entry.rows.map((r,i)=>documentRowHtml(r,i,type,entry.id)).join('')||'<div class="batch-empty-note">Nenhuma linha identificada. Adicione manualmente.</div>'}</div><button data-doc-add-row="${entry.id}" class="button small" type="button">＋ Adicionar linha</button>`}
+    ${type==='third_party'?`<label class="field-label" style="margin-top:14px">Categoria da despesa<select data-doc-third-cat="${entry.id}">${expenseCats.map((c)=>`<option value="${c.id}" ${c.name==='Aluguel + condomínio'?'selected':''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select></label>`:''}
+    ${type==='cofrinho'&&entry.balance!=null?`<div class="document-balance"><span>Saldo identificado no Cofrinho</span><strong>${money.format(entry.balance)}</strong>${entry.benchmark?`<small>${esc(entry.benchmark)}</small>`:''}</div>`:''}
+  </div>`
 }
 function renderDocumentImport(kindPicker) {
   const imp=state.import; imp.document ??= defaultDocumentState(); const doc=imp.document
-  const parsed=doc.status==='parsed'
-  const type=doc.detectedType || (doc.hint==='auto'?'':doc.hint)
-  const expenseCats=state.categories.filter((c)=>c.kind==='expense')
-  $('mainArea').innerHTML=`<div class="content-stack">${kindPicker}<section class="dashboard-grid import-grid"><div class="panel">${panelHead('Comprovantes e prints','Envie PDF, JPG ou PNG. A leitura acontece no navegador e você sempre confere antes de salvar.')}
-    <label class="field-label">Tipo de documento<select id="documentHint"><option value="auto" ${doc.hint==='auto'?'selected':''}>Identificar automaticamente</option><option value="cofrinho" ${doc.hint==='cofrinho'?'selected':''}>Mercado Pago · Cofrinho</option><option value="third_party" ${doc.hint==='third_party'?'selected':''}>Pagamento por terceiro</option><option value="benefit" ${doc.hint==='benefit'?'selected':''}>Cartão alimentação</option><option value="receipt" ${doc.hint==='receipt'?'selected':''}>Nota fiscal / cupom</option></select></label>
-    <label class="dropzone document-dropzone"><div class="drop-icon">▧</div><strong>${doc.file?esc(doc.file.name):'Escolher PDF, JPG ou PNG'}</strong><span>${doc.file?`${(doc.file.size/1024).toFixed(1)} KB`:'Comprovantes, prints do Cofrinho e cartão alimentação'}</span><input id="documentFile" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></label>
-    <button id="analyzeDocumentBtn" class="button primary full" type="button" ${doc.file?'':'disabled'}>✦ Ler documento</button><div id="documentProgress" class="document-progress ${doc.progress?'':'hidden'}">${esc(doc.progress)}</div><div class="form-message ${doc.message?'':'hidden'}">${esc(doc.message)}</div>
-    ${parsed?`<div class="detected-source"><span class="detected-icon">✓</span><div><small>DOCUMENTO IDENTIFICADO</small><strong>${esc(documentTypeLabel(type))}</strong><span>${doc.rows.length?`${doc.rows.length} movimentação(ões) encontrada(s).`:(doc.balance!=null?`Saldo identificado: ${money.format(doc.balance)}.`:'Revise os dados abaixo.')}</span></div></div>
-      ${type==='receipt'?'<div class="batch-empty-note">A nota será guardada de forma privada. Depois, abra a compra correspondente em <strong>Compras</strong> para vinculá-la e detalhar os itens.</div>':`<div class="document-rows">${doc.rows.map((r,i)=>documentRowHtml(r,i,type)).join('')||'<div class="batch-empty-note">Nenhuma linha identificada. Adicione manualmente.</div>'}</div><button id="addDocumentRow" class="button small" type="button">＋ Adicionar linha</button>`}
-      ${type==='third_party'?`<label class="field-label" style="margin-top:14px">Categoria da despesa<select id="documentThirdPartyCategory">${expenseCats.map((c)=>`<option value="${c.id}" ${c.name==='Aluguel + condomínio'?'selected':''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select></label>`:''}
-      ${type==='cofrinho'&&doc.balance!=null?`<div class="document-balance"><span>Saldo identificado no Cofrinho</span><strong>${money.format(doc.balance)}</strong>${doc.benchmark?`<small>${esc(doc.benchmark)}</small>`:''}</div>`:''}
-      <button id="confirmDocumentBtn" class="button primary full" type="button">✓ Confirmar e salvar</button>`:''}</div>
-    <div class="panel">${panelHead('Onde usar cada arquivo?','O sistema separa documento de extrato para não misturar conceitos financeiros.')}<div class="check-list">${checkItem('Print do Cofrinho','Escolha “Mercado Pago · Cofrinho”. Reservar vira aporte, retirar vira resgate e rendimento fica separado.')}${checkItem('Comprovante de aluguel','Escolha “Pagamento por terceiro”. O gasto entra em Moradia sem alterar suas contas bancárias.')}${checkItem('Cartão alimentação','O crédito do benefício fica separado da renda em dinheiro e as compras entram no consumo.')}${checkItem('Nota fiscal','Fica vinculada à compra como detalhamento opcional, sem criar uma segunda despesa.')}</div><div class="privacy-note"><strong>Leitura local</strong><span>Imagens são lidas no seu navegador para montar a prévia. O arquivo só é enviado ao seu espaço privado no Supabase depois da confirmação.</span></div></div></section></div>`
+  const expenseCats=state.categories.filter((c)=>c.kind==='expense'); const parsed=doc.files.filter((x)=>x.status==='parsed').length
+  $('mainArea').innerHTML=`<div class="content-stack">${kindPicker}<section class="dashboard-grid import-grid"><div class="panel">${panelHead('Comprovantes e prints','Selecione vários PDFs, JPGs ou PNGs de uma vez. Cada documento é lido separadamente e uma falha não bloqueia os demais.')}
+    <label class="field-label">Tipo padrão<select id="documentHint"><option value="auto" ${doc.hint==='auto'?'selected':''}>Identificar automaticamente</option><option value="cofrinho" ${doc.hint==='cofrinho'?'selected':''}>Mercado Pago · Cofrinho</option><option value="third_party" ${doc.hint==='third_party'?'selected':''}>Pagamento por terceiro</option><option value="benefit" ${doc.hint==='benefit'?'selected':''}>Cartão alimentação</option><option value="receipt" ${doc.hint==='receipt'?'selected':''}>Nota fiscal / cupom</option></select></label>
+    <label class="dropzone document-dropzone"><div class="drop-icon">▧</div><strong>${doc.files.length?'Adicionar mais documentos':'Escolher vários PDFs, JPGs ou PNGs'}</strong><span>${doc.files.length?`${doc.files.length} arquivo(s) no lote`:'Comprovantes, prints do Cofrinho, cartão alimentação e notas fiscais'}</span><input id="documentFile" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></label>
+    <div class="batch-file-list">${doc.files.map(renderDocumentFileHeader).join('')}</div>
+    <button id="analyzeDocumentBtn" class="button primary full" type="button" ${doc.files.length?'':'disabled'}>✦ Analisar ${doc.files.length||''} documento${doc.files.length===1?'':'s'}</button><div id="documentProgress" class="document-progress ${doc.progress?'':'hidden'}">${esc(doc.progress)}</div><div class="form-message ${doc.message?'':'hidden'}">${esc(doc.message)}</div>
+    ${doc.files.map((x)=>renderDocumentDetail(x,expenseCats)).join('')}
+    ${parsed?`<button id="confirmDocumentBtn" class="button primary full" type="button">✓ Confirmar ${parsed} documento${parsed===1?'':'s'}</button>`:''}</div>
+    <div class="panel">${panelHead('O lote se organiza sozinho','Misture Cofrinho, aluguel, benefício e notas. O sistema identifica cada arquivo e você corrige só as exceções.')}<div class="check-list">${checkItem('Vários prints do Cofrinho','Períodos sobrepostos são seguros: aportes, resgates e rendimentos iguais são ignorados se já existirem.')}${checkItem('Vários comprovantes de aluguel','Cada comprovante mantém sua própria data e valor e entra como pagamento por terceiro.')}${checkItem('Cartão alimentação','Créditos e compras repetidos já registrados são ignorados na confirmação.')}${checkItem('Falha isolada','Se uma imagem estiver ilegível, os outros documentos continuam disponíveis para salvar.')}</div><div class="privacy-note"><strong>Leitura local</strong><span>Imagens são lidas no seu navegador para montar a prévia. Cada arquivo só é enviado ao seu espaço privado no Supabase depois da confirmação.</span></div></div></section></div>`
   bindImportKindPicker()
-  $('documentHint').addEventListener('change',()=>{doc.hint=$('documentHint').value; if(parsed){doc.detectedType=doc.hint==='auto'?detectDocumentType(doc.text,'auto'):doc.hint; const parsedData=parseDocument(doc.text,doc.detectedType); doc.rows=parsedData.rows||[]; doc.balance=parsedData.balance??null; doc.benchmark=parsedData.benchmark??null; renderImport()}})
-  $('documentFile').addEventListener('change',(e)=>{const f=e.target.files?.[0]; if(!f)return; doc.file=f; doc.status='idle'; doc.text=''; doc.rows=[]; doc.detectedType=''; doc.message=''; renderImport()})
-  $('analyzeDocumentBtn')?.addEventListener('click',analyzeFinancialDocument)
-  $('addDocumentRow')?.addEventListener('click',()=>{syncDocumentRowsFromDom(doc); const type=doc.detectedType; doc.rows.push({date:`${state.month}-01`,type:type==='cofrinho'?'income':type==='benefit'?'expense':'third_party',description:'',amount:0}); renderImport()})
-  document.querySelectorAll('[data-doc-remove]').forEach((b)=>b.addEventListener('click',()=>{syncDocumentRowsFromDom(doc); doc.rows.splice(Number(b.dataset.docRemove),1); renderImport()}))
-  $('confirmDocumentBtn')?.addEventListener('click',confirmFinancialDocument)
+  $('documentHint').addEventListener('change',()=>{doc.hint=$('documentHint').value; doc.files.forEach((entry)=>{entry.hint=doc.hint; if(entry.text){reparseDocumentEntry(entry)}}); renderImport()})
+  $('documentFile').addEventListener('change',(e)=>addDocumentFiles(e.target.files))
+  $('analyzeDocumentBtn')?.addEventListener('click',analyzeFinancialDocuments)
+  document.querySelectorAll('[data-doc-file-remove]').forEach((b)=>b.addEventListener('click',()=>removeDocumentFile(b.dataset.docFileRemove)))
+  document.querySelectorAll('[data-doc-file-type]').forEach((s)=>s.addEventListener('change',()=>{const entry=doc.files.find((x)=>x.id===s.dataset.docFileType); if(!entry)return; syncDocumentRowsFromDom(entry); entry.hint=s.value; reparseDocumentEntry(entry); renderImport()}))
+  document.querySelectorAll('[data-doc-add-row]').forEach((b)=>b.addEventListener('click',()=>{const entry=doc.files.find((x)=>x.id===b.dataset.docAddRow); if(!entry)return; syncDocumentRowsFromDom(entry); const type=entry.detectedType; entry.rows.push({date:`${state.month}-01`,type:type==='cofrinho'?'income':type==='benefit'?'expense':'third_party',description:'',amount:0}); renderImport()}))
+  document.querySelectorAll('[data-doc-remove]').forEach((b)=>b.addEventListener('click',()=>{const [id,idx]=b.dataset.docRemove.split(':'); const entry=doc.files.find((x)=>x.id===id); if(!entry)return; syncDocumentRowsFromDom(entry); entry.rows.splice(Number(idx),1); renderImport()}))
+  $('confirmDocumentBtn')?.addEventListener('click',confirmFinancialDocuments)
 }
 
 function importEntryStatus(entry) {
