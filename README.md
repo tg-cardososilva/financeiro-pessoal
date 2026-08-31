@@ -48,3 +48,11 @@ A tela **Importar extrato** agora foi dividida em três caminhos claros:
 - **Pagamento por terceiro:** fluxo direto para despesas como aluguel pago antes do dinheiro passar pelas contas bancárias.
 
 A identificação automática foi validada com os três arquivos reais de agosto já usados no projeto: Inter OFX, Inter Conta Corrente CSV e Inter Cartão CSV.
+
+## v2.1.2 — Importação em lote
+
+- Seleção de vários OFX/CSV de uma vez.
+- Identificação automática por arquivo.
+- Deduplicação contra o histórico e também entre arquivos do mesmo lote.
+- Falhas isoladas: um arquivo desconhecido não bloqueia os demais.
+- Prévia consolidada e confirmação única.

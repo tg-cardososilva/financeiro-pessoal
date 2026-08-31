@@ -880,7 +880,7 @@ function openPurchaseModal(id, initialTab = 'summary') {
 }
 
 function defaultImportState(kind = 'bank') {
-  return { step: 1, kind, accountId: '', detected: null, manualSource: false, file: null, fileText: '', rows: [], message: '', filter: 'all' }
+  return { step: 1, kind, files: [], rows: [], message: '', filter: 'all', result: null }
 }
 function bankImportAccounts() {
   return state.accounts.filter((a) => !['benefit', 'virtual', 'savings', 'investment'].includes(a.account_type))
@@ -911,29 +911,52 @@ function findAccountForDetection(detected) {
   if (!detected) return null
   return state.accounts.find((a) => a.institution === detected.institution && a.account_type === detected.accountType) || null
 }
-async function inspectImportFile(file) {
-  const imp = state.import
-  if (!file) return
-  imp.message = ''
-  imp.detected = null
-  imp.accountId = ''
-  imp.manualSource = false
-  try {
-    imp.fileText = await file.text()
-    const detected = detectImportSource(imp.fileText, file)
-    imp.detected = detected
-    const account = findAccountForDetection(detected)
-    if (account) imp.accountId = account.id
-    if (!detected) imp.message = 'Não reconheci a origem automaticamente. Você pode corrigir a origem abaixo sem alterar o arquivo.'
-  } catch (err) {
-    imp.fileText = ''
-    imp.message = 'Não foi possível ler esse arquivo. Tente um OFX ou CSV exportado pelo banco.'
+function importFileId(file) {
+  return `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`
+}
+async function makeImportFileEntry(file) {
+  const entry = {
+    id: importFileId(file), file, fileText: '', detected: null, accountId: '', manualSource: false,
+    status: 'reading', message: '', rows: [], profile: '', result: null
   }
+  try {
+    entry.fileText = await file.text()
+    entry.detected = detectImportSource(entry.fileText, file)
+    const account = findAccountForDetection(entry.detected)
+    if (account) entry.accountId = account.id
+    entry.status = entry.detected && account ? 'ready' : 'needs_source'
+    if (!entry.detected) entry.message = 'Origem ainda não reconhecida.'
+  } catch {
+    entry.status = 'error'
+    entry.message = 'Não foi possível ler o arquivo.'
+  }
+  return entry
+}
+async function addImportFiles(fileList) {
+  const imp = state.import
+  const files = [...(fileList || [])]
+  if (!files.length) return
+  const accepted = files.filter((f) => /\.(csv|ofx)$/i.test(f.name))
+  const rejected = files.length - accepted.length
+  if (rejected) imp.message = `${rejected} arquivo(s) ignorado(s). Use OFX ou CSV para extratos.`
+  const newEntries = []
+  for (const file of accepted) newEntries.push(await makeImportFileEntry(file))
+  const existingKeys = new Set(imp.files.map((x) => `${x.file.name}|${x.file.size}|${x.file.lastModified}`))
+  for (const entry of newEntries) {
+    const key = `${entry.file.name}|${entry.file.size}|${entry.file.lastModified}`
+    if (!existingKeys.has(key)) { imp.files.push(entry); existingKeys.add(key) }
+  }
+  renderImport()
+}
+function removeImportFile(id) {
+  const imp = state.import
+  imp.files = imp.files.filter((x) => x.id !== id)
+  imp.rows = imp.rows.filter((x) => x.fileId !== id)
   renderImport()
 }
 function renderImportKindPicker(imp) {
   return `<section class="import-kind-picker"><div class="import-kind-heading"><span class="eyebrow">ADICIONAR DADOS</span><h2>O que você quer registrar?</h2><p>Escolha só o tipo de informação. A conta específica é identificada automaticamente quando possível.</p></div><div class="import-kind-grid">
-    <button class="import-kind-card ${imp.kind === 'bank' ? 'active' : ''}" data-import-kind="bank" type="button"><span class="import-kind-icon">▦</span><strong>Banco ou cartão</strong><small>Envie OFX/CSV. Identificamos a origem.</small><b>Extratos →</b></button>
+    <button class="import-kind-card ${imp.kind === 'bank' ? 'active' : ''}" data-import-kind="bank" type="button"><span class="import-kind-icon">▦</span><strong>Banco ou cartão</strong><small>Envie vários OFX/CSV de uma vez.</small><b>Extratos →</b></button>
     <button class="import-kind-card ${imp.kind === 'benefit' ? 'active' : ''}" data-import-kind="benefit" type="button"><span class="import-kind-icon benefit">◉</span><strong>Cartão alimentação</strong><small>Benefício recebido e compras do cartão.</small><b>Benefício →</b></button>
     <button class="import-kind-card ${imp.kind === 'third_party' ? 'active' : ''}" data-import-kind="third_party" type="button"><span class="import-kind-icon third">⌂</span><strong>Pagamento por terceiro</strong><small>Ex.: aluguel pago antes do dinheiro entrar.</small><b>Registrar →</b></button>
   </div></section>`
@@ -945,6 +968,31 @@ function bindImportKindPicker() {
     state.import = defaultImportState(nextKind)
     renderImport()
   }))
+}
+function importEntryStatus(entry) {
+  if (entry.status === 'error') return { cls: 'error', icon: '!', label: 'Arquivo com erro' }
+  if (entry.status === 'unsupported') return { cls: 'warning', icon: '?', label: 'Formato ainda não suportado' }
+  if (entry.status === 'needs_source') return { cls: 'warning', icon: '?', label: 'Origem precisa ser confirmada' }
+  if (entry.status === 'parsed') return { cls: 'success', icon: '✓', label: 'Analisado' }
+  return { cls: 'success', icon: '✓', label: 'Origem identificada' }
+}
+function importFileCard(entry) {
+  const st = importEntryStatus(entry)
+  const account = state.accounts.find((a) => a.id === entry.accountId)
+  const accounts = bankImportAccounts()
+  const source = entry.detected?.label || (account ? sourceLabel(account) : 'Origem não identificada')
+  const rows = entry.rows || []
+  const fresh = rows.filter((r) => !r.duplicate).length
+  const dup = rows.filter((r) => r.duplicate).length
+  return `<article class="batch-file-card ${st.cls}">
+    <div class="batch-file-status">${st.icon}</div>
+    <div class="batch-file-main"><strong title="${esc(entry.file.name)}">${esc(entry.file.name)}</strong><span>${(entry.file.size / 1024).toFixed(1)} KB · ${esc(st.label)}</span>
+      <div class="batch-source-line"><b>${esc(source)}</b>${entry.status === 'parsed' ? `<span>${fresh} novas · ${dup} duplicadas</span>` : ''}</div>
+      ${entry.message ? `<small class="batch-file-message">${esc(entry.message)}</small>` : ''}
+      ${entry.manualSource || entry.status === 'needs_source' ? `<label class="batch-source-select">Origem<select data-batch-account="${entry.id}"><option value="">Selecione</option>${accounts.map((a) => `<option value="${a.id}" ${a.id === entry.accountId ? 'selected' : ''}>${esc(sourceLabel(a))}</option>`).join('')}</select></label>` : ''}
+    </div>
+    <div class="batch-file-actions">${entry.detected && !entry.manualSource ? `<button class="text-button" data-correct-batch="${entry.id}" type="button">Corrigir</button>` : ''}<button class="icon-button" data-remove-batch="${entry.id}" type="button" title="Remover">×</button></div>
+  </article>`
 }
 function renderImport() {
   state.import ??= defaultImportState('bank')
@@ -972,33 +1020,25 @@ function renderImport() {
     return
   }
 
-  const steps = `<section class="import-steps">${step('1', 'Arquivo', imp.step)}<div class="step-line"></div>${step('2', 'Conferência', imp.step)}<div class="step-line"></div>${step('3', 'Concluído', imp.step)}</section>`
+  const steps = `<section class="import-steps">${step('1', 'Arquivos', imp.step)}<div class="step-line"></div>${step('2', 'Conferência', imp.step)}<div class="step-line"></div>${step('3', 'Concluído', imp.step)}</section>`
   if (imp.step === 1) {
-    const accounts = bankImportAccounts()
-    const detectedAccount = state.accounts.find((a) => a.id === imp.accountId)
-    const detection = imp.file ? (imp.detected && detectedAccount
-      ? `<div class="detected-source"><span class="detected-icon">✓</span><div><small>ORIGEM IDENTIFICADA</small><strong>${esc(imp.detected.label)}</strong><span>Vamos importar para ${esc(detectedAccount.name)}.</span></div><button id="correctSource" class="text-button" type="button">Corrigir origem</button></div>`
-      : `<div class="detected-source warning"><span class="detected-icon">?</span><div><small>ORIGEM NÃO CONFIRMADA</small><strong>Precisamos de uma confirmação</strong><span>Escolha a conta somente porque este formato ainda não foi reconhecido.</span></div><button id="correctSource" class="text-button" type="button">Escolher origem</button></div>`)
-      : ''
-    const manual = imp.manualSource || (imp.file && !imp.detected)
-      ? `<div class="manual-source"><label class="field-label">Corrigir origem<select id="importAccount"><option value="">Selecione</option>${accounts.map((a) => `<option value="${a.id}" ${a.id === imp.accountId ? 'selected' : ''}>${esc(sourceLabel(a))}</option>`).join('')}</select></label>${imp.detected ? '<button id="useAutomatic" class="text-button" type="button">Usar identificação automática</button>' : ''}</div>`
-      : ''
-    $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="dashboard-grid import-grid"><div class="panel">${panelHead('Envie seu extrato', 'Você não precisa escolher a conta. O sistema identifica a origem automaticamente e mostra a confirmação antes de gravar.')}
-      <label class="dropzone"><div class="drop-icon">⇧</div><strong>${imp.file ? esc(imp.file.name) : 'Escolher arquivo'}</strong><span>${imp.file ? `${(imp.file.size / 1024).toFixed(1)} KB` : 'OFX ou CSV · até 10 MB'}</span><input id="importFile" type="file" accept=".ofx,.csv,text/csv"></label>${detection}${manual}
-      <button id="analyzeBtn" class="button primary full" type="button" ${imp.file ? '' : 'disabled'}>✦ Analisar extrato</button><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></div>
-      <div class="panel">${panelHead('Você só confere o resultado', 'As decisões técnicas ficam com o sistema; você intervém apenas quando algo estiver incerto.')}<div class="check-list">${checkItem('Origem automática', 'Inter Conta e Inter Cartão são reconhecidos pelo conteúdo do arquivo, não pelo nome que você escolhe.')}${checkItem('Duplicidades', 'O mesmo extrato pode ser enviado novamente sem replicar lançamentos.')}${checkItem('Categoria sugerida', 'Você pode corrigir a categoria antes ou depois da importação.')}${checkItem('Compra real', 'Pagamentos do mesmo mercado podem ser agrupados depois da importação.')}</div></div></section></div>`
+    const count = imp.files.length
+    const ready = imp.files.filter((x) => x.status === 'ready' || (x.accountId && x.status === 'needs_source')).length
+    $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="dashboard-grid import-grid"><div class="panel">${panelHead('Envie todos os extratos juntos', 'Selecione junho, julho, agosto ou arquivos com períodos sobrepostos. O sistema organiza e deduplica antes de gravar.')}
+      <label class="dropzone batch-dropzone"><div class="drop-icon">⇧</div><strong>${count ? 'Adicionar mais arquivos' : 'Escolher vários arquivos'}</strong><span>OFX ou CSV · vários arquivos de uma vez</span><input id="importFiles" type="file" accept=".ofx,.csv,text/csv" multiple></label>
+      ${count ? `<div class="batch-file-list">${imp.files.map(importFileCard).join('')}</div>` : '<div class="batch-empty-note">Você pode selecionar extratos de meses diferentes e também versões acumuladas. Duplicidades serão removidas automaticamente.</div>'}
+      <button id="analyzeBatchBtn" class="button primary full" type="button" ${ready ? '' : 'disabled'}>✦ Analisar ${ready || ''} arquivo${ready === 1 ? '' : 's'}</button><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></div>
+      <div class="panel">${panelHead('O lote se organiza sozinho', 'Cada arquivo é tratado separadamente. Um formato desconhecido não bloqueia os demais.')}<div class="check-list">${checkItem('Origem automática', 'Identificamos Inter Conta e Inter Cartão pelo conteúdo de cada arquivo.')}${checkItem('Períodos sobrepostos', 'Uma transação repetida em dois extratos aparece apenas uma vez.')}${checkItem('Falha isolada', 'Se um arquivo não puder ser lido, os demais continuam normalmente.')}${checkItem('Uma confirmação', 'Ao final você aprova todas as novas transações do lote de uma vez.')}</div></div></section></div>`
     bindImportKindPicker()
-    $('importFile').addEventListener('change', (e) => {
-      imp.file = e.target.files?.[0] || null
-      imp.fileText = ''
-      imp.rows = []
-      imp.message = ''
-      if (imp.file) inspectImportFile(imp.file); else renderImport()
-    })
-    if ($('correctSource')) $('correctSource').addEventListener('click', () => { imp.manualSource = true; renderImport() })
-    if ($('importAccount')) $('importAccount').addEventListener('change', (e) => { imp.accountId = e.target.value })
-    if ($('useAutomatic')) $('useAutomatic').addEventListener('click', () => { const a = findAccountForDetection(imp.detected); imp.accountId = a?.id || ''; imp.manualSource = false; renderImport() })
-    $('analyzeBtn').addEventListener('click', analyzeImport)
+    $('importFiles').addEventListener('change', (e) => addImportFiles(e.target.files))
+    document.querySelectorAll('[data-remove-batch]').forEach((b) => b.addEventListener('click', () => removeImportFile(b.dataset.removeBatch)))
+    document.querySelectorAll('[data-correct-batch]').forEach((b) => b.addEventListener('click', () => {
+      const entry = imp.files.find((x) => x.id === b.dataset.correctBatch); if (entry) { entry.manualSource = true; entry.status = 'needs_source'; renderImport() }
+    }))
+    document.querySelectorAll('[data-batch-account]').forEach((s) => s.addEventListener('change', () => {
+      const entry = imp.files.find((x) => x.id === s.dataset.batchAccount); if (entry) { entry.accountId = s.value; entry.status = s.value ? 'ready' : 'needs_source'; entry.message = ''; renderImport() }
+    }))
+    $('analyzeBatchBtn').addEventListener('click', analyzeBatchImport)
     return
   }
 
@@ -1007,20 +1047,25 @@ function renderImport() {
     const dup = imp.rows.filter((r) => r.duplicate)
     const review = fresh.filter((r) => !r.category_id)
     const filtered = imp.rows.filter((r) => imp.filter === 'all' || (imp.filter === 'review' && !r.duplicate && !r.category_id) || (imp.filter === 'duplicates' && r.duplicate))
-    const account = state.accounts.find((a) => a.id === imp.accountId)
-    $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="panel"><div class="review-head"><div><span class="eyebrow">PRÉVIA DO EXTRATO</span><h2>${fresh.length} novas · ${dup.length} já existentes</h2><p class="muted">Origem: <strong>${esc(sourceLabel(account))}</strong>. Você pode ajustar categorias agora; a descrição original permanece intacta.</p></div><button id="changeFile" class="button" type="button">Trocar arquivo</button></div><div class="review-summary">${summaryChip('Novas', fresh.length)}${summaryChip('Duplicadas', dup.length)}${summaryChip('Para revisar', review.length)}</div><div class="review-filter"><button class="filter-pill ${imp.filter === 'all' ? 'active' : ''}" data-review-filter="all" type="button">Todas</button><button class="filter-pill ${imp.filter === 'review' ? 'active' : ''}" data-review-filter="review" type="button">Só para revisar</button><button class="filter-pill ${imp.filter === 'duplicates' ? 'active' : ''}" data-review-filter="duplicates" type="button">Duplicadas</button></div><div class="review-table">${filtered.slice(0, 220).map(reviewRow).join('')}</div><div class="review-actions"><span>${review.length ? `${review.length} lançamento(s) podem ser importados e revisados depois.` : 'Todas as novas transações estão categorizadas.'}</span><button id="confirmImport" class="button primary" type="button" ${fresh.length ? '' : 'disabled'}>✓ Importar ${fresh.length} novas</button></div><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></section></div>`
+    const unsupported = imp.files.filter((x) => ['unsupported', 'error', 'needs_source'].includes(x.status))
+    $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="panel"><div class="review-head"><div><span class="eyebrow">PRÉVIA DO LOTE</span><h2>${fresh.length} novas · ${dup.length} duplicadas</h2><p class="muted">${imp.files.length} arquivo(s) analisado(s). Duplicidades incluem histórico já salvo e sobreposição entre arquivos deste lote.</p></div><button id="changeFiles" class="button" type="button">Voltar aos arquivos</button></div>
+      <div class="review-summary">${summaryChip('Arquivos', imp.files.length)}${summaryChip('Novas', fresh.length)}${summaryChip('Duplicadas', dup.length)}${summaryChip('Para revisar', review.length)}</div>
+      ${unsupported.length ? `<div class="batch-warning"><strong>${unsupported.length} arquivo(s) ficaram fora da importação.</strong><span>${unsupported.map((x) => esc(x.file.name)).join(' · ')}</span></div>` : ''}
+      <div class="batch-mini-summary">${imp.files.map((x) => `<div><span>${esc(x.file.name)}</span><b>${esc(x.detected?.label || sourceLabel(state.accounts.find((a) => a.id === x.accountId)))}</b><small>${x.status === 'parsed' ? `${x.rows.filter((r) => !r.duplicate).length} novas · ${x.rows.filter((r) => r.duplicate).length} duplicadas` : esc(x.message || 'não analisado')}</small></div>`).join('')}</div>
+      <div class="review-filter"><button class="filter-pill ${imp.filter === 'all' ? 'active' : ''}" data-review-filter="all" type="button">Todas</button><button class="filter-pill ${imp.filter === 'review' ? 'active' : ''}" data-review-filter="review" type="button">Só para revisar</button><button class="filter-pill ${imp.filter === 'duplicates' ? 'active' : ''}" data-review-filter="duplicates" type="button">Duplicadas</button></div><div class="review-table">${filtered.slice(0, 350).map(reviewRow).join('')}</div><div class="review-actions"><span>${review.length ? `${review.length} lançamento(s) podem ser revisados agora ou depois.` : 'Todas as novas transações têm categoria sugerida.'}</span><button id="confirmBatchImport" class="button primary" type="button" ${fresh.length ? '' : 'disabled'}>✓ Importar ${fresh.length} novas</button></div><div id="importMessage" class="form-message ${imp.message ? '' : 'hidden'}">${esc(imp.message)}</div></section></div>`
     bindImportKindPicker()
-    $('changeFile').addEventListener('click', () => { imp.step = 1; imp.rows = []; imp.message = ''; renderImport() })
+    $('changeFiles').addEventListener('click', () => { imp.step = 1; imp.message = ''; renderImport() })
     document.querySelectorAll('[data-review-filter]').forEach((b) => b.addEventListener('click', () => { imp.filter = b.dataset.reviewFilter; renderImport() }))
     document.querySelectorAll('[data-import-cat]').forEach((s) => s.addEventListener('change', () => {
       const row = imp.rows.find((r) => r._key === s.dataset.importCat)
       if (row) { row.category_id = s.value || null; row.userEdited = true; renderImport() }
     }))
-    $('confirmImport').addEventListener('click', confirmImport)
+    $('confirmBatchImport').addEventListener('click', confirmBatchImport)
     return
   }
 
-  $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="panel success-panel"><div class="success-icon">✓</div><h2>Extrato importado.</h2><p>Novas transações foram adicionadas, duplicidades ignoradas e itens incertos ficaram disponíveis na fila de revisão.</p><div class="section-actions" style="justify-content:center"><button id="goTransactions" class="button" type="button">Revisar transações</button><button id="importAgain" class="button primary" type="button">Importar outro extrato</button></div></section></div>`
+  const result = imp.result || { imported: 0, duplicates: 0, filesImported: 0, filesSkipped: 0, errors: [] }
+  $('mainArea').innerHTML = `<div class="content-stack">${kindPicker}${steps}<section class="panel success-panel"><div class="success-icon">✓</div><h2>Lote processado.</h2><p>${result.imported} nova(s) transação(ões) adicionada(s). ${result.duplicates} duplicada(s) foram ignoradas.</p><div class="review-summary compact">${summaryChip('Arquivos importados', result.filesImported)}${summaryChip('Arquivos sem novidade', result.filesSkipped)}${summaryChip('Transações novas', result.imported)}</div>${result.errors?.length ? `<div class="batch-warning"><strong>Alguns arquivos precisam de atenção</strong><span>${result.errors.map((x) => esc(x)).join(' · ')}</span></div>` : ''}<div class="section-actions" style="justify-content:center"><button id="goTransactions" class="button" type="button">Revisar transações</button><button id="importAgain" class="button primary" type="button">Importar outro lote</button></div></section></div>`
   bindImportKindPicker()
   $('goTransactions').addEventListener('click', () => navigate('transactions'))
   $('importAgain').addEventListener('click', () => { state.import = defaultImportState('bank'); renderImport() })
@@ -1030,7 +1075,9 @@ function checkItem(title, text) { return `<div class="check-item"><div>✓</div>
 function summaryChip(label, value) { return `<div class="summary-chip"><span>${esc(label)}</span><strong>${value}</strong></div>` }
 function reviewRow(r) {
   const cats = state.categories.filter((c) => r.flow_type === 'expense' ? c.kind === 'expense' : ['income', 'yield'].includes(r.flow_type) ? c.kind === 'income' : c.kind === 'transfer')
-  return `<div class="review-row ${r.duplicate ? 'duplicate' : ''}"><div class="review-main"><strong>${esc(r.description)}</strong><span>${esc(dateFmt.format(parseDate(r.transaction_date)))} · ${r.duplicate ? 'já existe' : r.category_id ? 'categorizada' : 'precisa revisar'}</span></div><select data-import-cat="${r._key}" ${r.duplicate ? 'disabled' : ''}><option value="">Sem categoria</option>${cats.map((c) => `<option value="${c.id}" ${c.id === r.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select><span class="flow-chip">${r.is_internal_transfer ? 'Transferência' : esc(r.flow_type)}</span><span class="amount">${money.format(num(r.amount))}</span></div>`
+  const entry = state.import?.files?.find((x) => x.id === r.fileId)
+  const account = state.accounts.find((a) => a.id === r.accountId)
+  return `<div class="review-row ${r.duplicate ? 'duplicate' : ''}"><div class="review-main"><strong>${esc(r.description)}</strong><span>${esc(dateFmt.format(parseDate(r.transaction_date)))} · ${esc(sourceLabel(account))} · ${r.duplicate ? 'já existe' : r.category_id ? 'categorizada' : 'precisa revisar'}</span><small>${esc(entry?.file.name || '')}</small></div><select data-import-cat="${r._key}" ${r.duplicate ? 'disabled' : ''}><option value="">Sem categoria</option>${cats.map((c) => `<option value="${c.id}" ${c.id === r.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select><span class="flow-chip">${r.is_internal_transfer ? 'Transferência' : esc(r.flow_type)}</span><span class="amount">${money.format(num(r.amount))}</span></div>`
 }
 function inferProfile(account, file) {
   const ext = file.name.toLowerCase().split('.').pop()
@@ -1039,62 +1086,123 @@ function inferProfile(account, file) {
   if (account?.institution === 'inter' && account.account_type === 'checking') return 'inter_checking_csv'
   return ''
 }
-async function analyzeImport() {
-  const imp = state.import
-  if (!imp.file) { imp.message = 'Selecione um arquivo OFX ou CSV.'; renderImport(); return }
-  if (!imp.fileText) imp.fileText = await imp.file.text()
-  if (!imp.detected) imp.detected = detectImportSource(imp.fileText, imp.file)
-  if (!imp.accountId && imp.detected) imp.accountId = findAccountForDetection(imp.detected)?.id || ''
-  const account = state.accounts.find((a) => a.id === imp.accountId)
-  if (!account) { imp.message = 'Não consegui identificar a conta. Clique em “Escolher origem” para corrigir.'; imp.manualSource = true; renderImport(); return }
-  const profile = imp.manualSource ? inferProfile(account, imp.file) : (imp.detected?.profile || inferProfile(account, imp.file))
+async function parseImportEntry(entry) {
+  const account = state.accounts.find((a) => a.id === entry.accountId)
+  if (!account) throw new Error('Origem não definida')
+  const profile = entry.manualSource ? inferProfile(account, entry.file) : (entry.detected?.profile || inferProfile(account, entry.file))
+  entry.profile = profile
   if (!profile) {
-    imp.message = account.institution === 'mercado_pago'
-      ? 'Ainda não temos o parser do arquivo exportado pelo Mercado Pago. Quando você enviar um arquivo real desse extrato, eu mapeio o formato.'
-      : 'Esse formato ainda não está habilitado para a origem escolhida.'
-    renderImport(); return
+    entry.status = 'unsupported'
+    entry.message = account.institution === 'mercado_pago' ? 'Formato do Mercado Pago ainda não mapeado.' : 'Formato ainda não habilitado para essa origem.'
+    return []
   }
-  const btn = $('analyzeBtn'); setBusy(btn, true, 'Analisando')
+  const { data, error } = await supabase.functions.invoke('parse-finance-import', { body: { profile, text: entry.fileText } })
+  if (error) throw error
+  return data?.rows || []
+}
+async function analyzeBatchImport() {
+  const imp = state.import
+  const candidates = imp.files.filter((x) => x.status !== 'error' && x.accountId)
+  if (!candidates.length) { imp.message = 'Adicione pelo menos um arquivo com origem identificada.'; renderImport(); return }
+  const btn = $('analyzeBatchBtn'); setBusy(btn, true, 'Analisando lote')
+  imp.message = ''
   try {
-    const { data, error } = await supabase.functions.invoke('parse-finance-import', { body: { profile, text: imp.fileText } })
-    if (error) throw error
-    const parsed = data?.rows || []
-    const fps = parsed.map((r) => r.fingerprint)
+    const parsedEntries = []
+    for (const entry of candidates) {
+      entry.message = ''
+      try {
+        const rows = await parseImportEntry(entry)
+        if (entry.status === 'unsupported') continue
+        entry._parsedRaw = rows
+        parsedEntries.push(entry)
+      } catch (err) {
+        entry.status = 'error'
+        entry.message = humanError(err)
+      }
+    }
+    const allRaw = parsedEntries.flatMap((e) => e._parsedRaw || [])
+    const fps = [...new Set(allRaw.map((r) => r.fingerprint).filter(Boolean))]
     const existing = []
     for (let i = 0; i < fps.length; i += 100) {
       const chunk = fps.slice(i, i + 100)
-      if (!chunk.length) continue
-      const { data: found, error: e } = await supabase.from('transactions').select('source_fingerprint').in('source_fingerprint', chunk)
-      if (e) throw e
+      const { data: found, error } = await supabase.from('transactions').select('source_fingerprint').in('source_fingerprint', chunk)
+      if (error) throw error
       existing.push(...(found || []).map((x) => x.source_fingerprint))
     }
-    const set = new Set(existing)
+    const alreadySaved = new Set(existing)
+    const seenInBatch = new Set()
     const catMap = new Map(state.categories.map((c) => [c.name, c.id]))
-    imp.rows = parsed.map((r, i) => ({ ...r, _key: `${i}-${r.fingerprint.slice(0, 8)}`, duplicate: set.has(r.fingerprint), category_id: r.category_hint ? catMap.get(r.category_hint) || null : null, userEdited: false }))
-    imp.step = 2; imp.filter = 'all'; imp.message = ''; renderImport()
-  } catch (err) { imp.message = humanError(err); renderImport() }
+    imp.rows = []
+    for (const entry of parsedEntries) {
+      entry.rows = (entry._parsedRaw || []).map((r, i) => {
+        const intraBatchDuplicate = seenInBatch.has(r.fingerprint)
+        const duplicate = alreadySaved.has(r.fingerprint) || intraBatchDuplicate
+        if (!duplicate) seenInBatch.add(r.fingerprint)
+        return { ...r, fileId: entry.id, accountId: entry.accountId, _key: `${entry.id}-${i}-${r.fingerprint.slice(0, 8)}`, duplicate, duplicateReason: alreadySaved.has(r.fingerprint) ? 'existing' : intraBatchDuplicate ? 'batch' : null, category_id: r.category_hint ? catMap.get(r.category_hint) || null : null, userEdited: false }
+      })
+      entry.status = 'parsed'
+      delete entry._parsedRaw
+      imp.rows.push(...entry.rows)
+    }
+    imp.step = 2
+    imp.filter = 'all'
+    if (!imp.rows.length) imp.message = 'Nenhuma transação pôde ser analisada neste lote.'
+    renderImport()
+  } catch (err) {
+    imp.message = humanError(err)
+    renderImport()
+  } finally { setBusy(btn, false) }
 }
 async function sha256(text) { const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('') }
-async function confirmImport() {
+async function confirmBatchImport() {
   const imp = state.import
+  const btn = $('confirmBatchImport')
   const fresh = imp.rows.filter((r) => !r.duplicate)
-  const account = state.accounts.find((a) => a.id === imp.accountId)
-  if (!imp.file || !account || !fresh.length) return
-  const btn = $('confirmImport'); setBusy(btn, true, 'Importando')
+  if (!fresh.length) return
+  setBusy(btn, true, 'Importando lote')
+  const result = { imported: 0, duplicates: imp.rows.filter((r) => r.duplicate).length, filesImported: 0, filesSkipped: 0, errors: [] }
   try {
     const user = state.session.user
-    const fileText = imp.fileText || await imp.file.text()
-    const hash = await sha256(fileText)
-    const { data: batch, error: bErr } = await supabase.from('import_batches').insert({ user_id: user.id, account_id: account.id, file_name: imp.file.name, file_hash: hash, institution: account.institution, source_format: imp.file.name.toLowerCase().endsWith('.ofx') ? 'ofx' : 'csv', status: 'confirmed', row_count: imp.rows.length, duplicate_count: imp.rows.length - fresh.length, review_count: fresh.filter((r) => !r.category_id).length, confirmed_at: new Date().toISOString(), metadata: { detected_source: imp.detected?.label || null, automatic_detection: !imp.manualSource } }).select('id').single()
-    if (bErr) { if (bErr.code === '23505') { imp.message = 'Esse arquivo já foi importado anteriormente.'; renderImport(); return } throw bErr }
-    const payload = fresh.map((r) => ({ user_id: user.id, account_id: account.id, category_id: r.category_id || null, import_batch_id: batch.id, transaction_date: r.transaction_date, description: r.description, display_description: null, merchant: r.merchant, amount: r.amount, flow_type: r.flow_type, is_internal_transfer: r.is_internal_transfer, include_in_budget: r.include_in_budget, transaction_source: 'import', source_record_id: r.source_record_id, source_fingerprint: r.fingerprint, review_status: r.category_id ? (r.userEdited ? 'reviewed' : 'auto') : 'needs_review', tags: [], metadata: r.raw_data }))
-    const { error } = await supabase.from('transactions').insert(payload)
-    if (error) throw error
+    for (const entry of imp.files.filter((x) => x.status === 'parsed')) {
+      const account = state.accounts.find((a) => a.id === entry.accountId)
+      const fileRows = imp.rows.filter((r) => r.fileId === entry.id && !r.duplicate)
+      if (!account || !fileRows.length) { result.filesSkipped++; continue }
+      try {
+        const hash = await sha256(entry.fileText)
+        const { data: batch, error: bErr } = await supabase.from('import_batches').insert({
+          user_id: user.id, account_id: account.id, file_name: entry.file.name, file_hash: hash, institution: account.institution,
+          source_format: entry.file.name.toLowerCase().endsWith('.ofx') ? 'ofx' : 'csv', status: 'confirmed', row_count: entry.rows.length,
+          duplicate_count: entry.rows.filter((r) => r.duplicate).length, review_count: fileRows.filter((r) => !r.category_id).length,
+          confirmed_at: new Date().toISOString(), metadata: { detected_source: entry.detected?.label || null, automatic_detection: !entry.manualSource, batch_import: true }
+        }).select('id').single()
+        if (bErr) {
+          if (bErr.code === '23505') { result.filesSkipped++; continue }
+          throw bErr
+        }
+        const payload = fileRows.map((r) => ({
+          user_id: user.id, account_id: account.id, category_id: r.category_id || null, import_batch_id: batch.id,
+          transaction_date: r.transaction_date, description: r.description, display_description: null, merchant: r.merchant, amount: r.amount,
+          flow_type: r.flow_type, is_internal_transfer: r.is_internal_transfer, include_in_budget: r.include_in_budget,
+          transaction_source: 'import', source_record_id: r.source_record_id, source_fingerprint: r.fingerprint,
+          review_status: r.category_id ? (r.userEdited ? 'reviewed' : 'auto') : 'needs_review', tags: [], metadata: r.raw_data
+        }))
+        const { error } = await supabase.from('transactions').insert(payload)
+        if (error) throw error
+        result.imported += payload.length
+        result.filesImported++
+      } catch (err) {
+        result.errors.push(`${entry.file.name}: ${humanError(err)}`)
+      }
+    }
+    imp.result = result
     imp.step = 3
     await loadData()
     state.view = 'import'
     renderImport()
-  } catch (err) { imp.message = humanError(err); renderImport() }
+  } catch (err) {
+    imp.message = humanError(err)
+    renderImport()
+  } finally { setBusy(btn, false) }
 }
 
 function renderAccounts() {
