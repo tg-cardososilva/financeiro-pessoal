@@ -558,6 +558,7 @@ function openTransactionModal(id) {
     <div class="form-grid">
       <label class="field-label full-span">Nome que aparece no painel<input id="editDisplay" value="${esc(t.display_description || '')}" placeholder="${esc(t.description)}"></label>
       <label class="field-label">Data usada nos relatórios<input id="editDate" type="date" value="${esc(t.transaction_date)}"></label>
+      <label class="field-label">Valor usado no painel<input id="editAmount" inputmode="decimal" value="${Math.abs(num(t.amount)).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"><span class="tag-input-help">Use apenas o valor absoluto; o tipo define entrada ou saída.</span></label>
       <label class="field-label">Conta<select id="editAccount">${state.accounts.map((a) => `<option value="${a.id}" ${a.id === t.account_id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
       <label class="field-label">Tipo<select id="editFlow"><option value="expense" ${t.flow_type === 'expense' ? 'selected' : ''}>Despesa</option><option value="income" ${t.flow_type === 'income' ? 'selected' : ''}>Receita</option><option value="yield" ${t.flow_type === 'yield' ? 'selected' : ''}>Rendimento</option><option value="transfer" ${t.flow_type === 'transfer' ? 'selected' : ''}>Transferência</option><option value="investment" ${t.flow_type === 'investment' ? 'selected' : ''}>Investimento</option><option value="adjustment" ${t.flow_type === 'adjustment' ? 'selected' : ''}>Ajuste</option></select></label>
       <label class="field-label">Categoria<select id="editCategory"><option value="">Sem categoria</option>${relevantCategories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}<option value="__custom__">＋ Outro / criar categoria…</option></select></label><div id="customCategoryFields" class="custom-category-fields full-span hidden"><label class="field-label">Grupo<select id="customCategoryGroup">${[...new Set(relevantCategories.map((c) => c.group_name))].map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}<option value="Outros">Outros</option></select></label><label class="field-label">Nome da categoria<input id="customCategoryName" placeholder="Ex.: Mercado do condomínio"></label><div class="custom-learn-note"><strong>O sistema aprende com você.</strong><span>Ao salvar, lançamentos iguais recebem esta categoria e a regra vale para as próximas importações.</span></div></div>
@@ -569,13 +570,23 @@ function openTransactionModal(id) {
     <div class="source-box"><div class="source-box-title">DADO ORIGINAL / FONTE</div><div class="source-grid"><div><span>Descrição original</span><strong>${esc(originalDescription)}</strong></div><div><span>Valor original</span><strong>${money.format(num(originalAmount))}</strong></div><div><span>Data original</span><strong>${esc(fullDateFmt.format(parseDate(originalDate)))}</strong></div><div><span>Origem</span><strong>${esc(sourceAccount)} · ${esc(t.transaction_source)}</strong></div></div></div>
     ${t.transaction_source === 'import' && rulePattern ? `<div class="toggle-row"><div><strong>Criar regra automática com esta edição</strong><p>Próximas transações que contenham “${esc(rulePattern)}” recebem esta categoria automaticamente.</p></div><label class="switch"><input id="createRule" type="checkbox"><span class="switch-track"></span></label></div>` : ''}
     <div id="txEditMessage" class="form-message hidden"></div>
-    <div class="modal-actions"><div>${t.flow_type === 'expense' ? '<button id="splitTx" class="button" type="button">≡ Dividir em categorias</button>' : ''}</div><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveTx" class="button primary" type="submit">✓ Salvar alterações</button></div></div>
+    <div class="modal-actions"><div class="modal-actions-left"><button id="deleteTx" class="button danger" type="button">Excluir lançamento</button>${t.flow_type === 'expense' ? '<button id="splitTx" class="button" type="button">≡ Dividir em categorias</button>' : ''}</div><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveTx" class="button primary" type="submit">✓ Salvar alterações</button></div></div>
   </form></div>`
 
   const close = () => { modal.innerHTML = '' }
   $('closeModal').addEventListener('click', close)
   $('cancelModal').addEventListener('click', close)
   $('splitTx')?.addEventListener('click', () => openSplitModal(t.id))
+  $('deleteTx').addEventListener('click', async () => {
+    if (t.purchase_id) { showInfo('txEditMessage', 'Desagrupe esta compra antes de excluir um dos pagamentos.'); return }
+    if (!confirm(`Excluir ${displayDescription(t)} (${money.format(num(t.amount))})? Esta ação remove o lançamento do painel.`)) return
+    const btn=$('deleteTx'); setBusy(btn,true,'Excluindo')
+    try {
+      const {error}=await supabase.from('transactions').delete().eq('id',t.id)
+      if(error) throw error
+      close(); toast('Lançamento excluído.','success'); await loadData()
+    } catch(err) { showInfo('txEditMessage',humanError(err)); setBusy(btn,false) }
+  })
   $('editInternal').addEventListener('change', () => { if ($('editInternal').checked) $('editFlow').value = 'transfer' })
   $('editCategory').addEventListener('change', () => setHidden($('customCategoryFields'), $('editCategory').value !== '__custom__'))
 
@@ -586,12 +597,16 @@ function openTransactionModal(id) {
     showInfo('txEditMessage', '')
     try {
       const metadata = { ...(t.metadata || {}) }
-      if (!metadata.source_snapshot && t.transaction_source === 'import') {
+      if (!metadata.source_snapshot && t.transaction_source !== 'manual') {
         metadata.source_snapshot = { description: t.description, transaction_date: t.transaction_date, amount: t.amount, account_id: t.account_id, flow_type: t.flow_type }
       }
       const tags = $('editTags').value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 12)
       const display = $('editDisplay').value.trim()
       const flow = $('editFlow').value
+      const internal = $('editInternal').checked
+      const editedAmount=Math.abs(parseMoneyInput($('editAmount').value)||0)
+      if(!editedAmount) throw new Error('Informe um valor válido.')
+      const signedAmount = flow === 'expense' ? -editedAmount : (flow === 'income' || flow === 'yield') ? editedAmount : (num(t.amount) < 0 ? -editedAmount : editedAmount)
       let categoryId = $('editCategory').value || null
       const accountId = $('editAccount').value
       const isCustomCategory = categoryId === '__custom__'
@@ -609,10 +624,10 @@ function openTransactionModal(id) {
         categoryId = learned?.category_id || null
         if (!categoryId) throw new Error('Não foi possível criar a categoria.')
       }
-      const internal = $('editInternal').checked
       const { error } = await supabase.from('transactions').update({
         display_description: display || null,
         transaction_date: $('editDate').value,
+        amount: signedAmount,
         account_id: accountId,
         category_id: categoryId,
         flow_type: internal ? 'transfer' : flow,
@@ -1085,6 +1100,8 @@ function parseCofrinhoDocument(text) {
   const monthYear=String(text).match(/(JANEIRO|FEVEREIRO|MAR[ÇC]O|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s*\/?\s*(20\d{2})/i)
   if (monthYear) year=Number(monthYear[2])
   for (let i=0;i<lines.length;i++) {
+    const normalizedLine=normalizeSearchText(lines[i])
+    if (normalizedLine==='HOJE') { currentDate=new Date().toISOString().slice(0,10); continue }
     const d=lines[i].match(/(\d{1,2})\s+de\s+([A-Za-zÀ-ÿ]+)/i)
     if (d) { currentDate=isoFromPtDay(d[1],d[2],year); continue }
     const window=[lines[i],lines[i+1]||'',lines[i+2]||''].join(' ')
@@ -1094,10 +1111,11 @@ function parseCofrinhoDocument(text) {
     else if (u.includes('DINHEIRO RETIRADO')) movement='withdrawal'
     else if (u.includes('RENDIMENTOS')) movement='income'
     if (!movement || !currentDate) continue
-    const amountMatch=window.match(/[+-]\s*R\$\s*([\d.]+,\d{2})/i) || window.match(/R\$\s*([\d.]+,\d{2})/i)
+    const amountMatch=window.match(/[+-]\s*R\$\s*([\d.]+(?:,\d{2})?)/i) || window.match(/R\$\s*([\d.]+(?:,\d{2})?)/i)
     if (!amountMatch) continue
     const amount=Math.abs(parseMoneyInput(amountMatch[1]))
-    if (!amount || rows.some((r)=>r.date===currentDate && r.type===movement && Math.abs(r.amount-amount)<.001)) continue
+    const duplicate=rows.some((r)=>r.date===currentDate && r.type===movement && (movement==='income' || Math.abs(r.amount-amount)<.001))
+    if (!amount || duplicate) continue
     rows.push({ date:currentDate, type:movement, description:movement==='contribution'?'Dinheiro reservado':movement==='withdrawal'?'Dinheiro retirado':'Rendimento do cofrinho', amount })
   }
   const flat=String(text).replace(/\s+/g,' ')
@@ -1108,26 +1126,34 @@ function parseCofrinhoDocument(text) {
 }
 function parseBenefitDocument(text) {
   const lines=String(text).split(/\n+/).map((x)=>x.trim()).filter(Boolean)
-  const rows=[]; let currentDate=null; let year=Number(state.month.split('-')[0])
-  let fallbackMonth=Number(state.month.split('-')[1])
+  const rows=[]; let year=Number(state.month.split('-')[0]); let current=null
   const head=String(text).match(/(JANEIRO|FEVEREIRO|MAR[ÇC]O|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s*\/?\s*(20\d{2})/i)
-  if (head) { fallbackMonth=ptMonthNumber(head[1])||fallbackMonth; year=Number(head[2]) }
-  for (let i=0;i<lines.length;i++) {
-    const d=lines[i].match(/(?:segunda-feira|ter[cç]a-feira|quarta-feira|quinta-feira|sexta-feira|s[aá]bado|domingo)?\s*,?\s*(\d{1,2})\s+de\s+([A-Za-zÀ-ÿ]+)/i)
-    if (d) { currentDate=isoFromPtDay(d[1],d[2],year); continue }
-    const window=[lines[i-1]||'',lines[i],lines[i+1]||'',lines[i+2]||''].join(' ')
-    const amountMatch=window.match(/([+-])\s*R\$\s*([\d.]+,\d{2})/i)
-    if (!amountMatch || !currentDate) continue
-    const amount=Math.abs(parseMoneyInput(amountMatch[2])); const sign=amountMatch[1]
-    const u=normalizeSearchText(window)
-    const isCredit=sign==='+' || u.includes('BENEFICIO BASE') || u.includes('EMGEPRON')
-    let desc=isCredit?'Crédito do benefício':'Compra com cartão alimentação'
-    if (u.includes('ASSAI')) desc='Assaí Atacadista'
-    else if (u.includes('ZONA SUL')) desc='Zona Sul'
-    else if (u.includes('EMGEPRON')) desc='EMGEPRON · Benefício Base'
-    if (!amount || rows.some((r)=>r.date===currentDate && r.type===(isCredit?'benefit_credit':'expense') && Math.abs(r.amount-amount)<.001 && r.description===desc)) continue
-    rows.push({ date:currentDate, type:isCredit?'benefit_credit':'expense', description:desc, amount })
+  if (head) year=Number(head[2])
+  const flush=()=>{
+    if(!current)return
+    const block=current.lines.join(' ')
+    const u=normalizeSearchText(block)
+    const matches=[...block.matchAll(/([+-])\s*R\$\s*([\d.]+,\d{2})/gi)]
+    const seen=new Set()
+    for(const m of matches){
+      const amount=Math.abs(parseMoneyInput(m[2])); if(!amount)continue
+      const key=`${m[1]}|${amount.toFixed(2)}`
+      if(seen.has(key)) continue
+      seen.add(key)
+      const isCredit=m[1]==='+'
+      let desc=isCredit?'Crédito do benefício':'Compra com cartão alimentação'
+      if (u.includes('ASSAI')) desc='Assaí Atacadista'
+      else if (u.includes('ZONA SUL')) desc='Zona Sul'
+      else if (u.includes('EMGEPRON') || u.includes('BENEFICIO BASE')) desc='EMGEPRON · Benefício Base'
+      rows.push({date:current.date,type:isCredit?'benefit_credit':'expense',description:desc,amount})
+    }
   }
+  for(const line of lines){
+    const d=line.match(/(?:segunda-feira|ter[cç]a-feira|quarta-feira|quinta-feira|sexta-feira|s[aá]bado|domingo)?\s*,?\s*(\d{1,2})\s+de\s+([A-Za-zÀ-ÿ]+)/i)
+    if(d){ flush(); current={date:isoFromPtDay(d[1],d[2],year),lines:[]}; continue }
+    if(current) current.lines.push(line)
+  }
+  flush()
   return rows
 }
 function parseDocument(text,type) {
@@ -1190,7 +1216,7 @@ async function ensureCofrinhoPosition() {
   if(!account) throw new Error('Conta Mercado Pago - Cofrinho não encontrada.')
   let p=state.investmentPositions.find((x)=>x.account_id===account.id && /cofrinho/i.test(x.name))
   if(p) return p
-  const {data,error}=await supabase.from('investment_positions').insert({user_id:state.session.user.id,account_id:account.id,name:'Mercado Pago · Cofrinho',asset_type:'cash_reserve',benchmark:'120% do CDI',liquidity_label:'Liquidez diária',invested_amount:0,current_value:0,metadata:{source:'document_import'}}).select().single(); if(error)throw error
+  const {data,error}=await supabase.from('investment_positions').insert({user_id:state.session.user.id,account_id:account.id,name:'Mercado Pago · Cofrinho',asset_type:'cash_reserve',benchmark:'120% do CDI',liquidity_label:'Liquidez diária',invested_amount:0,current_value:0,metadata:{source:'document_import',auto_calculate_from_movements:true}}).select().single(); if(error)throw error
   state.investmentPositions.push(data)
   return data
 }
@@ -1222,11 +1248,11 @@ async function saveFinancialDocumentEntry(entry) {
   } else if (entry.detectedType==='benefit') {
     const account=benefitAccount(); if(!account)throw new Error('Conta Cartão Alimentação não encontrada.')
     const expenseCat=state.categories.find((c)=>c.kind==='expense'&&c.name==='Mercado') || state.categories.find((c)=>c.kind==='expense'&&c.group_name==='Alimentação')
-    const incomeCat=state.categories.find((c)=>c.kind==='income'&&c.name==='Outras receitas') || state.categories.find((c)=>c.kind==='income')
+    const incomeCat=state.categories.find((c)=>c.kind==='income'&&c.name==='Benefício alimentação') || state.categories.find((c)=>c.kind==='income'&&c.group_name==='Benefícios') || state.categories.find((c)=>c.kind==='income')
     for(const r of entry.rows.filter((x)=>x.date&&x.amount)) {
       const credit=r.type==='benefit_credit'; const amount=credit?Math.abs(r.amount):-Math.abs(r.amount); const description=r.description|| (credit?'Crédito do benefício':'Compra com cartão alimentação')
       const {data:exists,error:qErr}=await supabase.from('transactions').select('id').eq('account_id',account.id).eq('transaction_date',r.date).eq('amount',amount).eq('description',description).limit(1); if(qErr)throw qErr
-      if(!exists?.length){ const {error}=await supabase.from('transactions').insert({user_id:user.id,account_id:account.id,category_id:credit?incomeCat?.id:expenseCat?.id,transaction_date:r.date,description,amount,flow_type:credit?'income':'expense',is_internal_transfer:false,include_in_budget:!credit,transaction_source:'receipt',review_status:credit?'reviewed':'auto',metadata:{source:'benefit_print',file_name:entry.file.name}}); if(error)throw error }
+      if(!exists?.length){ const {error}=await supabase.from('transactions').insert({user_id:user.id,account_id:account.id,category_id:credit?incomeCat?.id:expenseCat?.id,transaction_date:r.date,description,amount,flow_type:credit?'income':'expense',is_internal_transfer:false,include_in_budget:!credit,transaction_source:'receipt',review_status:'needs_review',metadata:{source:'benefit_print',file_name:entry.file.name,ocr_import:true}}); if(error)throw error }
     }
   } else if (entry.detectedType!=='receipt') throw new Error('Escolha o tipo do documento antes de confirmar.')
   await uploadDocumentFile(entry)
@@ -1658,8 +1684,9 @@ function goalOptions(selected='') {
 }
 function openInvestmentPositionModal(id=null) {
   const p = id ? state.investmentPositions.find((x)=>x.id===id) : null
+  const autoCalculated=Boolean(p?.metadata?.auto_calculate_from_movements)
   const modal = $('modalHost')
-  modal.innerHTML = `<div class="modal-backdrop"><form id="investmentPositionForm" class="modal"><div class="modal-head"><div><span class="eyebrow">${p?'EDITAR POSIÇÃO':'NOVA POSIÇÃO'}</span><h2>${p?esc(p.name):'Cadastrar investimento'}</h2><div class="modal-sub">O principal investido e o valor atual ficam separados para calcular o resultado real.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label full-span">Nome<input id="invName" value="${esc(p?.name||'')}" placeholder="Ex.: CDB liquidez diária" required></label><label class="field-label">Conta / instituição<select id="invAccount">${investmentAccountOptions(p?.account_id||'')}</select></label><label class="field-label">Tipo<select id="invType"><option value="cash_reserve">Reserva</option><option value="fixed_income">Renda fixa</option><option value="fund">Fundo</option><option value="stock">Ação</option><option value="reit">FII</option><option value="crypto">Cripto</option><option value="pension">Previdência</option><option value="other">Outro</option></select></label><label class="field-label">Principal investido<input id="invPrincipal" inputmode="decimal" value="${p?num(p.invested_amount).toLocaleString('pt-BR',{minimumFractionDigits:2}):''}" placeholder="0,00"></label><label class="field-label">Valor atual<input id="invCurrent" inputmode="decimal" value="${p?num(p.current_value).toLocaleString('pt-BR',{minimumFractionDigits:2}):''}" placeholder="0,00"></label><label class="field-label">Benchmark<input id="invBenchmark" value="${esc(p?.benchmark||'')}" placeholder="Ex.: CDI, IPCA + 6%"></label><label class="field-label">Liquidez<input id="invLiquidity" value="${esc(p?.liquidity_label||'')}" placeholder="Ex.: D+0"></label><label class="field-label">Vencimento<input id="invMaturity" type="date" value="${esc(p?.maturity_date||'')}"></label><label class="field-label">Meta<select id="invGoal">${goalOptions(p?.goal_id||'')}</select></label></div><div id="invPositionMessage" class="form-message hidden"></div><div class="modal-actions"><span>${p?'<button id="updateValuation" class="text-button" type="button">Atualizar valor e histórico</button>':''}</span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveInvPosition" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
+  modal.innerHTML = `<div class="modal-backdrop"><form id="investmentPositionForm" class="modal"><div class="modal-head"><div><span class="eyebrow">${p?'EDITAR POSIÇÃO':'NOVA POSIÇÃO'}</span><h2>${p?esc(p.name):'Cadastrar investimento'}</h2><div class="modal-sub">${autoCalculated?'Principal e valor atual são calculados automaticamente a partir dos aportes, resgates e rendimentos.':'O principal investido e o valor atual ficam separados para calcular o resultado real.'}</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label full-span">Nome<input id="invName" value="${esc(p?.name||'')}" placeholder="Ex.: CDB liquidez diária" required></label><label class="field-label">Conta / instituição<select id="invAccount">${investmentAccountOptions(p?.account_id||'')}</select></label><label class="field-label">Tipo<select id="invType"><option value="cash_reserve">Reserva</option><option value="fixed_income">Renda fixa</option><option value="fund">Fundo</option><option value="stock">Ação</option><option value="reit">FII</option><option value="crypto">Cripto</option><option value="pension">Previdência</option><option value="other">Outro</option></select></label><label class="field-label">Principal investido<input id="invPrincipal" inputmode="decimal" value="${p?num(p.invested_amount).toLocaleString('pt-BR',{minimumFractionDigits:2}):''}" placeholder="0,00" ${autoCalculated?'readonly':''}></label><label class="field-label">Valor atual<input id="invCurrent" inputmode="decimal" value="${p?num(p.current_value).toLocaleString('pt-BR',{minimumFractionDigits:2}):''}" placeholder="0,00" ${autoCalculated?'readonly':''}></label><label class="field-label">Benchmark<input id="invBenchmark" value="${esc(p?.benchmark||'')}" placeholder="Ex.: CDI, IPCA + 6%"></label><label class="field-label">Liquidez<input id="invLiquidity" value="${esc(p?.liquidity_label||'')}" placeholder="Ex.: D+0"></label><label class="field-label">Vencimento<input id="invMaturity" type="date" value="${esc(p?.maturity_date||'')}"></label><label class="field-label">Meta<select id="invGoal">${goalOptions(p?.goal_id||'')}</select></label></div><div id="invPositionMessage" class="form-message hidden"></div><div class="modal-actions"><span>${p&&!autoCalculated?'<button id="updateValuation" class="text-button" type="button">Atualizar valor e histórico</button>':autoCalculated?'<span class="muted">Calculado pelas movimentações</span>':''}</span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveInvPosition" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
   $('invType').value=p?.asset_type||'fixed_income'
   const close=()=>{modal.innerHTML=''}
   $('closeModal').addEventListener('click',close); $('cancelModal').addEventListener('click',close)

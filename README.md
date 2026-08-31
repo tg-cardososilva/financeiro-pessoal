@@ -35,3 +35,11 @@ Depois aguarde a publicação e faça `Ctrl + F5`.
 - Cada documento é analisado separadamente; uma falha não bloqueia os demais.
 - Cofrinho, pagamentos por terceiro, cartão alimentação e notas podem coexistir no mesmo lote.
 - Movimentações já registradas do Cofrinho e cartão alimentação são verificadas antes de inserir novamente.
+
+
+## v2.2.3
+- Corrige leitura de prints do Cartão Alimentação por blocos de data.
+- Permite editar o valor de qualquer transação sem perder a referência de origem.
+- Adiciona exclusão de lançamentos não agrupados.
+- Importações por imagem entram como "Precisa revisar" até validação.
+- Crédito do benefício usa a categoria Benefício alimentação.
