@@ -1,35 +1,40 @@
 # Financeiro Pessoal
 
-Aplicação web privada para consolidar Inter, Mercado Pago, cartão, reservas e pagamentos feitos por terceiros.
+Aplicação web privada para consolidar contas bancárias, cartões, Mercado Pago, benefícios, pagamentos feitos por terceiros e compras com múltiplas formas de pagamento.
 
-## Arquitetura
+## O que esta versão faz
 
-- Frontend estático (HTML/CSS/JavaScript), ideal para GitHub Pages.
-- Supabase Auth para e-mail + senha.
-- Supabase Postgres com RLS para isolamento por usuário.
-- Edge Function `parse-finance-import` para interpretar extratos.
+- Login, cadastro e recuperação de senha com Supabase Auth.
+- Isolamento de dados por usuário com RLS.
+- Dashboard mensal com visão financeira real ou somente contas bancárias.
+- Separação entre entradas em dinheiro e benefícios.
+- Orçamento mensal editável.
+- Importação de extratos Inter em OFX/CSV, com deduplicação e revisão de categorias.
+- Fila de transações que precisam de revisão.
+- Edição de transações sem apagar a descrição original do extrato.
+- Nome amigável, categoria, tags, observação e tipo de movimentação.
+- Criação de regras automáticas de categorização a partir de uma correção.
+- Agrupamento de múltiplos pagamentos em uma única compra.
+- Sugestões de agrupamento por estabelecimento/data.
+- Divisão de compras por categorias sem alterar o total financeiro.
+- Detalhamento de compras opcional nos gráficos.
+- Upload privado de nota fiscal/PDF/XML/imagem ligado à compra.
+- Conta separada para Cartão Alimentação / benefício.
+- Registro de gastos pagos por terceiros, como aluguel e condomínio.
+- Cadastro e edição de contas adicionais.
 
-## Publicar no GitHub Pages
+## Arquivos do site
 
-1. Crie um repositório no GitHub.
-2. Envie os arquivos deste diretório para a branch `main`.
-3. Em **Settings → Pages**, escolha **Deploy from a branch**, branch `main`, pasta `/ (root)`.
-4. Após a publicação, no Supabase vá em **Authentication → URL Configuration** e cadastre a URL do GitHub Pages como **Site URL** e em **Redirect URLs**.
+- `index.html` — estrutura da aplicação.
+- `styles.css` — design responsivo.
+- `app.js` — autenticação, dashboard, edição, importação e integração Supabase.
 
-Não há chave secreta no frontend. A chave `sb_publishable_...` é uma chave pública de cliente; a proteção dos dados é feita pelo login e pelas políticas RLS do banco.
+## Publicação no GitHub Pages
 
-## Primeiro acesso
+O repositório deve publicar a branch `main` a partir de `/ (root)`.
 
-Na tela inicial, use **Primeiro acesso** para criar seu usuário. O trigger do Supabase cria automaticamente as contas e categorias padrão.
+Para atualizar uma versão já publicada, substitua no repositório os arquivos `index.html`, `styles.css` e `app.js` pelos arquivos desta pasta e faça um novo commit. O GitHub Pages republica automaticamente.
 
-## Importação suportada
+## Segurança
 
-- Inter conta corrente CSV
-- Inter conta corrente OFX
-- Inter cartão CSV
-
-O painel verifica duplicidades antes de confirmar a importação.
-
-## Pagamento por terceiro
-
-Em **Novo lançamento → Pago por terceiro**, o sistema registra a despesa na visão financeira real sem alterar o saldo bancário. É o fluxo indicado para aluguel/condomínio pagos diretamente por terceiro.
+O frontend usa somente a chave `publishable` do Supabase. O acesso aos dados é controlado pelas políticas RLS do banco. Nunca coloque uma chave `service_role` ou `sb_secret_...` neste repositório.

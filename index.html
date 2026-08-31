@@ -3,78 +3,114 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta name="theme-color" content="#f6f7f9" />
+  <meta name="theme-color" content="#f3f4f1" />
   <title>Financeiro Pessoal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div id="splash" class="splash"><div class="logo-mark">$</div><div class="skeleton-line"></div></div>
+  <div id="splash" class="splash" aria-live="polite">
+    <div class="brand-orb">F</div>
+    <div class="splash-copy"><strong>Financeiro</strong><span>Organizando seu painel...</span></div>
+  </div>
 
   <section id="authView" class="auth-shell hidden">
-    <div class="auth-visual">
-      <div class="auth-brand"><div class="logo-mark invert">$</div><span>Financeiro</span></div>
-      <div class="auth-copy">
-        <span class="eyebrow light">CONTROLE FINANCEIRO PESSOAL</span>
-        <h1>Clareza para decidir.<br>Privacidade para acompanhar.</h1>
-        <p>Inter, Mercado Pago, cartão, reservas e pagamentos feitos por terceiros em uma única visão financeira.</p>
+    <div class="auth-story">
+      <div class="auth-brand"><div class="brand-orb light">F</div><span>Financeiro</span></div>
+      <div class="auth-story-copy">
+        <span class="eyebrow inverse">PAINEL FINANCEIRO PRIVADO</span>
+        <h1>Seu dinheiro explicado, não apenas listado.</h1>
+        <p>Contas, benefícios, compras agrupadas, notas fiscais e gastos pagos por terceiros em uma única leitura.</p>
       </div>
-      <div class="auth-preview-card">
-        <div class="preview-label">VISÃO DO MÊS</div>
-        <div class="preview-value">Seu dinheiro, sem duplicidade.</div>
-        <div class="preview-row"><span>Transferências internas</span><strong>Excluídas dos gastos</strong></div>
-        <div class="preview-row"><span>Extratos bancários</span><strong>Importação com revisão</strong></div>
-        <div class="preview-row"><span>Pagamento por terceiros</span><strong>Visão financeira real</strong></div>
+      <div class="auth-proof-grid">
+        <article><span>01</span><strong>Sem duplicidades</strong><p>Transferências internas e pagamento de fatura não viram gasto novamente.</p></article>
+        <article><span>02</span><strong>Compra real</strong><p>Cartão alimentação + débito podem formar uma única compra.</p></article>
+        <article><span>03</span><strong>Privacidade</strong><p>Cada login enxerga somente os próprios dados.</p></article>
       </div>
     </div>
-    <div class="auth-form-wrap">
+
+    <div class="auth-form-side">
       <form id="authForm" class="auth-card">
-        <div class="mobile-brand"><div class="logo-mark">$</div><span>Financeiro</span></div>
-        <span class="eyebrow">ACESSO PRIVADO</span>
+        <div class="mobile-brand"><div class="brand-orb">F</div><span>Financeiro</span></div>
+        <span class="eyebrow">ACESSO SEGURO</span>
         <h2 id="authTitle">Entrar no painel</h2>
         <p id="authSubtitle" class="muted">Use seu e-mail e senha para acessar seus dados.</p>
-        <label class="field-label">E-mail<input id="authEmail" type="email" placeholder="voce@email.com" autocomplete="email" required></label>
-        <label id="passwordLabel" class="field-label">Senha
-          <div class="password-field"><input id="authPassword" type="password" placeholder="Mínimo de 6 caracteres" autocomplete="current-password" minlength="6"><button id="togglePassword" class="icon-btn" type="button" aria-label="Mostrar senha">◉</button></div>
+
+        <label class="field-label">E-mail
+          <input id="authEmail" type="email" placeholder="voce@email.com" autocomplete="email" required>
         </label>
-        <button id="authSubmit" class="primary-btn full" type="submit"><span>Entrar</span><b>→</b></button>
-        <div id="authMessage" class="info-message hidden"></div>
+        <label id="passwordLabel" class="field-label">Senha
+          <div class="password-field">
+            <input id="authPassword" type="password" placeholder="Mínimo de 6 caracteres" autocomplete="current-password" minlength="6">
+            <button id="togglePassword" class="icon-button" type="button" aria-label="Mostrar ou ocultar senha">Mostrar</button>
+          </div>
+        </label>
+
+        <button id="authSubmit" class="button primary full" type="submit"><span>Entrar</span><b>→</b></button>
+        <div id="authMessage" class="form-message hidden" aria-live="polite"></div>
+
         <div id="authActions" class="auth-actions">
-          <button type="button" class="text-btn" data-auth="reset">Esqueci minha senha</button>
-          <button type="button" class="text-btn" data-auth="signup">Primeiro acesso</button>
+          <button type="button" class="text-button" data-auth="reset">Esqueci minha senha</button>
+          <button type="button" class="text-button" data-auth="signup">Criar uma conta</button>
         </div>
-        <div class="security-note"><span>✓</span><span>Autenticação e sessão gerenciadas pelo Supabase Auth.</span></div>
+
+        <div class="security-note"><span>✓</span><p>Autenticação por Supabase Auth. Os dados financeiros ficam protegidos por usuário.</p></div>
       </form>
     </div>
   </section>
 
   <div id="appView" class="app-shell hidden">
     <aside id="sidebar" class="sidebar">
-      <div class="sidebar-brand"><div class="logo-mark">$</div><span>Financeiro</span><button id="sidebarClose" class="sidebar-close">×</button></div>
-      <nav class="sidebar-nav">
-        <button class="nav-btn active" data-view="overview"><span class="nav-ico">▦</span><span>Visão geral</span></button>
-        <button class="nav-btn" data-view="transactions"><span class="nav-ico">≡</span><span>Transações</span></button>
-        <button class="nav-btn" data-view="import"><span class="nav-ico">⇧</span><span>Importar extrato</span></button>
-        <button class="nav-btn" data-view="accounts"><span class="nav-ico">▣</span><span>Contas</span></button>
+      <div class="sidebar-head">
+        <div class="sidebar-brand"><div class="brand-orb light">F</div><span>Financeiro</span></div>
+        <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="Fechar menu">×</button>
+      </div>
+
+      <div class="sidebar-caption">PAINEL</div>
+      <nav class="sidebar-nav" aria-label="Navegação principal">
+        <button class="nav-button active" data-view="overview"><span class="nav-icon">⌂</span><span>Visão geral</span></button>
+        <button class="nav-button" data-view="transactions"><span class="nav-icon">≡</span><span>Transações</span><span id="reviewBadge" class="nav-badge hidden">0</span></button>
+        <button class="nav-button" data-view="purchases"><span class="nav-icon">◫</span><span>Compras</span></button>
+        <button class="nav-button" data-view="import"><span class="nav-icon">⇧</span><span>Importar extrato</span></button>
+        <button class="nav-button" data-view="accounts"><span class="nav-icon">▣</span><span>Contas</span></button>
       </nav>
-      <div class="sidebar-spacer"></div>
-      <div class="sidebar-user"><div id="userAvatar" class="user-avatar">U</div><div class="user-meta"><strong id="userName">Usuário</strong><span id="userEmail">—</span></div><button id="logoutBtn" class="icon-btn" title="Sair">↪</button></div>
+
+      <div class="sidebar-help">
+        <span class="sidebar-help-icon">✦</span>
+        <div><strong>Leitura financeira real</strong><p>Benefícios e pagamentos por terceiros sem distorcer seu saldo bancário.</p></div>
+      </div>
+
+      <div class="sidebar-user">
+        <div id="userAvatar" class="user-avatar">U</div>
+        <div class="user-meta"><strong id="userName">Usuário</strong><span id="userEmail">—</span></div>
+        <button id="logoutBtn" class="icon-button dark" type="button" title="Sair" aria-label="Sair">↪</button>
+      </div>
     </aside>
-    <button id="mobileOverlay" class="mobile-overlay hidden" aria-label="Fechar menu"></button>
+
+    <button id="mobileOverlay" class="mobile-overlay hidden" type="button" aria-label="Fechar menu"></button>
 
     <main class="main-content">
       <header class="topbar">
-        <div class="topbar-title"><button id="menuBtn" class="menu-btn">☰</button><div><span class="eyebrow">FINANÇAS PESSOAIS</span><h1 id="pageTitle">Visão geral</h1></div></div>
-        <div class="top-actions"><input id="monthPicker" class="month-picker" type="month"><button id="viewModeBtn" class="seg-btn active">Visão real</button><button id="newEntryBtn" class="primary-btn">＋ Novo lançamento</button></div>
+        <div class="topbar-title">
+          <button id="menuBtn" class="menu-button" type="button" aria-label="Abrir menu">☰</button>
+          <div><span class="eyebrow">FINANÇAS PESSOAIS</span><h1 id="pageTitle">Visão geral</h1></div>
+        </div>
+        <div class="top-actions">
+          <input id="monthPicker" class="month-picker" type="month" aria-label="Mês do painel">
+          <button id="viewModeBtn" class="button subtle" type="button">Visão real</button>
+          <button id="newEntryBtn" class="button primary" type="button">＋ Novo lançamento</button>
+        </div>
       </header>
-      <div id="errorBanner" class="error-banner hidden"><span id="errorText"></span><button id="retryBtn">Tentar novamente</button></div>
+
+      <div id="errorBanner" class="error-banner hidden" role="alert"><span id="errorText"></span><button id="retryBtn" type="button">Tentar novamente</button></div>
       <div id="mainArea"></div>
     </main>
   </div>
 
   <div id="modalHost"></div>
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
