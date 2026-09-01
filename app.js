@@ -460,6 +460,7 @@ function renderOverview() {
     if (b.dataset.kpiDrill === 'result') openResultBreakdown(totals, result, netInvestment)
     else openTransactionDrilldown({ mode: b.dataset.kpiDrill })
   }))
+  bindLineChart()
   bindTransactionOpeners()
 }
 
@@ -483,7 +484,71 @@ function lineChart(values) {
   })
   const d = pts.map((pt, i) => `${i ? 'L' : 'M'}${pt[0].toFixed(1)},${pt[1].toFixed(1)}`).join(' ')
   const area = `${d} L${pts.at(-1)[0]},${h - p} L${pts[0][0]},${h - p} Z`
-  return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Evolução do saldo"><defs><linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#102535" stop-opacity=".12"/><stop offset="100%" stop-color="#102535" stop-opacity="0"/></linearGradient></defs><line x1="${p}" y1="${h - p}" x2="${w - p}" y2="${h - p}" stroke="#e6e9e6"/><line x1="${p}" y1="${h / 2}" x2="${w - p}" y2="${h / 2}" stroke="#edf0ed"/><path d="${area}" class="chart-fill"/><path d="${d}" class="chart-line"/><circle cx="${pts.at(-1)[0]}" cy="${pts.at(-1)[1]}" r="5" fill="#102535"/><text x="${p}" y="${h - 5}" class="chart-label">01</text><text x="${w / 2}" y="${h - 5}" text-anchor="middle" class="chart-label">15</text><text x="${w - p}" y="${h - 5}" text-anchor="end" class="chart-label">${values.length}</text></svg>`
+  const hitPoints = pts.map((pt, i) => `<circle class="chart-hit-point" cx="${pt[0].toFixed(1)}" cy="${pt[1].toFixed(1)}" r="11" tabindex="0" data-chart-index="${i}" data-chart-x="${pt[0].toFixed(1)}" data-chart-y="${pt[1].toFixed(1)}" data-chart-value="${values[i]}" aria-label="Dia ${i + 1}: ${money.format(values[i])}"/>`).join('')
+  return `<svg class="interactive-line-chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Evolução financeira. Passe o mouse ou toque na linha para ver os valores por dia." data-chart-width="${w}" data-chart-padding="${p}"><defs><linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#102535" stop-opacity=".12"/><stop offset="100%" stop-color="#102535" stop-opacity="0"/></linearGradient></defs><line x1="${p}" y1="${h - p}" x2="${w - p}" y2="${h - p}" stroke="#e6e9e6"/><line x1="${p}" y1="${h / 2}" x2="${w - p}" y2="${h / 2}" stroke="#edf0ed"/><path d="${area}" class="chart-fill"/><path d="${d}" class="chart-line"/><g class="chart-interaction-layer">${hitPoints}</g><line class="chart-guide" x1="0" y1="${p}" x2="0" y2="${h - p}"/><circle class="chart-focus-dot" cx="0" cy="0" r="5"/><g class="chart-tooltip" transform="translate(0 0)"><rect class="chart-tooltip-bg" width="154" height="48" rx="9"/><text class="chart-tooltip-date" x="12" y="19"></text><text class="chart-tooltip-value" x="12" y="38"></text></g><circle cx="${pts.at(-1)[0]}" cy="${pts.at(-1)[1]}" r="4" class="chart-end-dot"/><text x="${p}" y="${h - 5}" class="chart-label">01</text><text x="${w / 2}" y="${h - 5}" text-anchor="middle" class="chart-label">15</text><text x="${w - p}" y="${h - 5}" text-anchor="end" class="chart-label">${values.length}</text></svg>`
+}
+
+function bindLineChart() {
+  const svg = document.querySelector('.interactive-line-chart')
+  if (!svg || svg.dataset.bound === '1') return
+  svg.dataset.bound = '1'
+  const hits = [...svg.querySelectorAll('.chart-hit-point')]
+  const guide = svg.querySelector('.chart-guide')
+  const dot = svg.querySelector('.chart-focus-dot')
+  const tooltip = svg.querySelector('.chart-tooltip')
+  const tooltipDate = svg.querySelector('.chart-tooltip-date')
+  const tooltipValue = svg.querySelector('.chart-tooltip-value')
+  const w = Number(svg.dataset.chartWidth || 760)
+  const tooltipW = 154
+  let pinned = false
+
+  const showPoint = (hit) => {
+    if (!hit) return
+    const x = Number(hit.dataset.chartX)
+    const y = Number(hit.dataset.chartY)
+    const index = Number(hit.dataset.chartIndex)
+    const value = Number(hit.dataset.chartValue)
+    const [year, month] = state.month.split('-').map(Number)
+    const day = index + 1
+    const dateLabel = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(year, month - 1, day, 12))
+    guide.setAttribute('x1', x); guide.setAttribute('x2', x)
+    dot.setAttribute('cx', x); dot.setAttribute('cy', y)
+    tooltipDate.textContent = dateLabel
+    tooltipValue.textContent = money.format(value)
+    const tx = Math.max(6, Math.min(w - tooltipW - 6, x + 12))
+    const ty = Math.max(6, Math.min(194, y - 60))
+    tooltip.setAttribute('transform', `translate(${tx} ${ty})`)
+    svg.classList.add('chart-active')
+    hits.forEach((h) => h.classList.toggle('active', h === hit))
+  }
+  const nearestByClientX = (clientX) => {
+    const rect = svg.getBoundingClientRect()
+    if (!rect.width) return hits[0]
+    const localX = (clientX - rect.left) * w / rect.width
+    return hits.reduce((best, h) => Math.abs(Number(h.dataset.chartX) - localX) < Math.abs(Number(best.dataset.chartX) - localX) ? h : best, hits[0])
+  }
+  const hide = () => {
+    if (pinned) return
+    svg.classList.remove('chart-active')
+    hits.forEach((h) => h.classList.remove('active'))
+  }
+
+  svg.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'touch' && pinned) return
+    showPoint(nearestByClientX(event.clientX))
+  })
+  svg.addEventListener('pointerleave', hide)
+  svg.addEventListener('click', (event) => {
+    const hit = event.target.closest?.('.chart-hit-point') || nearestByClientX(event.clientX)
+    pinned = true
+    showPoint(hit)
+  })
+  hits.forEach((hit) => {
+    hit.addEventListener('focus', () => { pinned = true; showPoint(hit) })
+    hit.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { pinned = false; svg.classList.remove('chart-active'); hit.blur() }
+    })
+  })
 }
 function categoryBars(cats) {
   const max = cats[0]?.[1] || 1
@@ -539,7 +604,7 @@ function renderTransactions() {
     <section class="panel">
       <div class="toolbar"><label class="search-box">⌕<input id="txSearch" placeholder="Buscar descrição, estabelecimento ou tag"></label><select id="txAccount"><option value="">Todas as contas</option>${state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select><select id="txCategory"><option value="">Todas as categorias</option>${state.categories.map((c) => `<option value="${c.id}">${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}</select></div>
       <div class="filter-pills"><button class="filter-pill active" data-filter="all" type="button">Todas</button><button class="filter-pill" data-filter="needs_review" type="button">Precisa revisar</button><button class="filter-pill" data-filter="expense" type="button">Despesas</button><button class="filter-pill" data-filter="income" type="button">Receitas</button><button class="filter-pill" data-filter="grouped" type="button">Compras agrupadas</button></div>
-      <div id="drilldownFilter"></div><div id="selectionBar"></div><div id="txList" class="tx-table"></div>
+      <div id="drilldownFilter"></div><div id="selectionBar"></div><div id="txList" class="tx-table"></div><div id="txFilterSummary"></div>
     </section>
   </div>`
 
@@ -563,6 +628,7 @@ function renderTransactions() {
     })
     $('txList').innerHTML = rows.length ? rows.map((t) => transactionRow(t, { selectMode: state.selectionMode })).join('') : empty('Nenhuma transação com esses filtros.')
     renderDrilldownFilter(rows.length)
+    renderFilterSummary(rows, { q, acc, cat, group, drillAccount, drillMode, filter })
     renderSelectionBar()
     bindTransactionOpeners()
     document.querySelectorAll('[data-select-tx]').forEach((c) => c.addEventListener('change', (e) => {
@@ -571,6 +637,33 @@ function renderTransactions() {
       renderSelectionBar()
     }))
   }
+  const renderFilterSummary = (rows, active) => {
+    const host = $('txFilterSummary')
+    if (!host) return
+    const hasFilter = !!(active.q || active.acc || active.cat || active.group || active.drillAccount || active.drillMode || active.filter !== 'all')
+    if (!hasFilter || !rows.length) { host.innerHTML = ''; return }
+
+    const expenses = rows.filter((t) => t.flow_type === 'expense' && !t.is_internal_transfer)
+    const incomes = rows.filter((t) => ['income', 'yield'].includes(t.flow_type) && !t.is_internal_transfer)
+    const transfers = rows.filter((t) => t.is_internal_transfer || t.flow_type === 'transfer')
+    const expenseTotal = expenses.reduce((sum, t) => sum + Math.abs(num(t.amount)), 0)
+    const incomeTotal = incomes.reduce((sum, t) => sum + Math.abs(num(t.amount)), 0)
+    const net = incomeTotal - expenseTotal
+
+    let metrics = ''
+    if (expenseTotal > 0 && incomeTotal === 0) {
+      const avg = expenses.length ? expenseTotal / expenses.length : 0
+      metrics = `<div class="filter-summary-main"><span>Total gasto</span><strong>${money.format(expenseTotal)}</strong></div><div class="filter-summary-metrics"><div><span>Lançamentos</span><strong>${expenses.length}</strong></div><div><span>Ticket médio</span><strong>${money.format(avg)}</strong></div></div>`
+    } else if (incomeTotal > 0 && expenseTotal === 0) {
+      const avg = incomes.length ? incomeTotal / incomes.length : 0
+      metrics = `<div class="filter-summary-main income"><span>Total recebido</span><strong>${money.format(incomeTotal)}</strong></div><div class="filter-summary-metrics"><div><span>Lançamentos</span><strong>${incomes.length}</strong></div><div><span>Valor médio</span><strong>${money.format(avg)}</strong></div></div>`
+    } else {
+      metrics = `<div class="filter-summary-main"><span>Saldo do filtro</span><strong class="${net >= 0 ? 'positive' : 'negative'}">${money.format(net)}</strong></div><div class="filter-summary-metrics"><div><span>Entradas</span><strong>${money.format(incomeTotal)}</strong></div><div><span>Saídas</span><strong>${money.format(expenseTotal)}</strong></div><div><span>Lançamentos</span><strong>${rows.length}</strong></div></div>`
+    }
+
+    host.innerHTML = `<div class="filter-summary-card"><div class="filter-summary-head"><div><span class="eyebrow">RESUMO DO FILTRO</span><h3>O que este recorte representa</h3></div><small>${rows.length} item(ns) exibido(s)</small></div>${metrics}${transfers.length ? `<p class="filter-summary-note">${transfers.length} transferência(s) interna(s) aparecem na lista, mas não entram no total de gasto/receita.</p>` : ''}</div>`
+  }
+
   const renderDrilldownFilter = (count) => {
     const host = $('drilldownFilter')
     if (!host) return

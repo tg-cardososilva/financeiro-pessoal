@@ -1,4 +1,4 @@
-# Financeiro Pessoal v2.2.9
+# Financeiro Pessoal v2.2.11
 
 Atualização focada em separar fluxo mensal de saldo/patrimônio acumulado.
 
@@ -18,3 +18,16 @@ Substitua no GitHub Pages:
 - index.html
 - app.js
 - styles.css
+
+
+## v2.2.11
+- Resumo automático no final da lista de transações quando houver filtro ativo.
+- Para despesas: total gasto, quantidade de lançamentos e ticket médio.
+- Para receitas: total recebido, quantidade e valor médio.
+- Para filtros mistos: entradas, saídas e saldo líquido.
+- Transferências internas são mostradas, mas não distorcem o somatório financeiro.
+
+
+## v2.2.11
+- Gráfico de Evolução financeira interativo: hover/toque mostra data e valor acumulado do dia.
+- Tooltip navegável também por teclado.
