@@ -58,7 +58,8 @@ const state = {
   investmentMovements: [],
   investmentSnapshots: [],
   transactionDrilldown: null,
-  investmentMovementFilter: 'all'
+  investmentMovementFilter: 'all',
+  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], loading: false, loaded: false, engine: null, error: null }
 }
 
 function esc(v = '') {
@@ -246,8 +247,9 @@ function navigate(view) {
   state.selectedTx.clear()
   document.querySelectorAll('.nav-button').forEach((b) => b.classList.toggle('active', b.dataset.view === view))
   $('pageTitle').textContent = {
-    overview: 'Visão geral', transactions: 'Transações', purchases: 'Compras', investments: 'Investimentos', import: 'Importar extrato', accounts: 'Contas'
+    overview: 'Visão geral', transactions: 'Transações', purchases: 'Compras', investments: 'Investimentos', import: 'Importar extrato', accounts: 'Contas', jarvis: 'Jarvis'
   }[view]
+  setHidden($('financeTopActions'), view === 'jarvis')
   toggleSidebar(false)
   renderMain()
 }
@@ -342,6 +344,7 @@ function renderMain() {
   if (state.view === 'investments') renderInvestments()
   if (state.view === 'import') renderImport()
   if (state.view === 'accounts') renderAccounts()
+  if (state.view === 'jarvis') renderJarvis()
 }
 
 function calcTotals(tx) {
@@ -2132,6 +2135,128 @@ function openPasswordResetModal() {
     if (error) { showInfo('passwordMessage', humanError(error)); setBusy(btn, false); return }
     modal.innerHTML = ''; toast('Senha atualizada.', 'success')
   })
+}
+
+
+async function loadJarvisData(force = false) {
+  if (!state.session || state.jarvis.loading || (state.jarvis.loaded && !force)) return
+  state.jarvis.loading = true
+  if (state.view === 'jarvis') renderJarvis()
+  try {
+    const [messages, annotations, notes, tasks, projects, actions] = await Promise.all([
+      supabase.from('jarvis_messages').select('*').order('created_at', { ascending: false }).limit(40),
+      supabase.from('financial_annotations').select('*').order('created_at', { ascending: false }).limit(12),
+      supabase.from('jarvis_notes').select('*').order('created_at', { ascending: false }).limit(12),
+      supabase.from('jarvis_tasks').select('*').order('created_at', { ascending: false }).limit(12),
+      supabase.from('jarvis_projects').select('*').order('created_at', { ascending: false }).limit(12),
+      supabase.from('jarvis_actions').select('*').order('created_at', { ascending: false }).limit(12)
+    ])
+    const err = messages.error || annotations.error || notes.error || tasks.error || projects.error || actions.error
+    if (err) throw err
+    state.jarvis.messages = (messages.data || []).reverse()
+    state.jarvis.annotations = annotations.data || []
+    state.jarvis.notes = notes.data || []
+    state.jarvis.tasks = tasks.data || []
+    state.jarvis.projects = projects.data || []
+    state.jarvis.actions = actions.data || []
+    state.jarvis.error = null
+    state.jarvis.loaded = true
+  } catch (err) {
+    state.jarvis.error = humanError(err)
+    state.jarvis.loaded = true
+    toast(state.jarvis.error, 'error')
+  } finally {
+    state.jarvis.loading = false
+    if (state.view === 'jarvis') renderJarvis()
+  }
+}
+
+function jarvisIntentLabel(intent) {
+  return ({ financial: 'Financeiro', note: 'Nota', reminder: 'Lembrete', calendar: 'Agenda', project: 'Projeto', query: 'Consulta', conversation: 'Conversa', unknown: 'Indefinido' })[intent] || 'Mensagem'
+}
+
+function jarvisCreatedSummary() {
+  const pending = state.jarvis.annotations.filter((x) => x.reconciliation_status === 'pending').length
+  const tasks = state.jarvis.tasks.filter((x) => x.status === 'pending').length
+  const actions = state.jarvis.actions.filter((x) => x.status === 'proposed').length
+  return [
+    ['Contextos financeiros', pending, 'Aguardando conciliacao com extratos'],
+    ['Notas e ideias', state.jarvis.notes.length, 'Memoria estruturada do Jarvis'],
+    ['Lembretes', tasks, 'Pendentes'],
+    ['Acoes para confirmar', actions, 'Agenda e acoes externas']
+  ]
+}
+
+function renderJarvis() {
+  if (!state.jarvis.loaded && !state.jarvis.loading) {
+    $('mainArea').innerHTML = `<div class="content-stack"><div class="skeleton-block h90"></div><div class="skeleton-block h340"></div></div>`
+    loadJarvisData()
+    return
+  }
+  const messages = state.jarvis.messages
+  const hasOpenAI = state.jarvis.engine === 'openai'
+  const statusLabel = hasOpenAI ? 'IA conectada' : 'Modo local de teste'
+  const statusClass = hasOpenAI ? 'online' : 'local'
+  const cards = jarvisCreatedSummary()
+  const loadError = state.jarvis.error ? `<div class="error-banner jarvis-load-error" role="alert"><span>${esc(state.jarvis.error)}</span><button id="jarvisRetryLoad" type="button">Tentar novamente</button></div>` : ''
+  $('mainArea').innerHTML = `<div class="content-stack jarvis-view">
+    ${loadError}
+    <section class="jarvis-hero">
+      <div class="jarvis-hero-copy"><span class="eyebrow">ASSISTENTE PESSOAL</span><h2>Jarvis</h2><p>Laboratorio autenticado para testar mensagens antes do WhatsApp. Tudo fica vinculado somente ao seu usuario.</p></div>
+      <div class="jarvis-statuses"><span class="jarvis-status ${statusClass}"><i></i>${esc(statusLabel)}</span><span class="jarvis-status waiting"><i></i>WhatsApp aguardando Meta</span></div>
+    </section>
+    <section class="jarvis-layout">
+      <div class="panel jarvis-chat-panel">
+        <div class="panel-head"><div><h2>Conversa de teste</h2><p>Escreva como voce falaria no WhatsApp. Financeiro vira contexto para conciliacao, nao transacao bancaria.</p></div><button id="jarvisRefresh" class="button small" type="button">Atualizar</button></div>
+        <div id="jarvisChat" class="jarvis-chat" aria-live="polite">
+          ${messages.length ? messages.map((m) => `<div class="jarvis-message ${m.direction === 'inbound' ? 'user' : 'assistant'}"><div class="jarvis-bubble"><span>${esc(m.body || m.transcript || '')}</span>${m.direction === 'outbound' ? `<small>${esc(jarvisIntentLabel(m.intent))}</small>` : ''}</div></div>`).join('') : `<div class="jarvis-empty"><strong>Comece com uma mensagem real.</strong><span>Ex.: Jarvis, gastei R$ 42 na Edna no debito. Comprei leite e pao.</span></div>`}
+        </div>
+        <div class="jarvis-quick-prompts">
+          <button type="button" data-jarvis-prompt="Jarvis, gastei R$ 42 na Edna no debito. Comprei leite e pao.">Gasto</button>
+          <button type="button" data-jarvis-prompt="Jarvis, anota uma ideia de video sobre erros comuns no fluxo de caixa.">Ideia</button>
+          <button type="button" data-jarvis-prompt="Jarvis, me lembra amanha as 9h de enviar o contrato.">Lembrete</button>
+          <button type="button" data-jarvis-prompt="Jarvis, agenda reuniao com Carlos sexta as 14h.">Agenda</button>
+        </div>
+        <form id="jarvisForm" class="jarvis-composer">
+          <textarea id="jarvisInput" rows="2" maxlength="2000" placeholder="Fale com o Jarvis..."></textarea>
+          <button id="jarvisSend" class="button primary" type="submit">Enviar</button>
+        </form>
+        <div id="jarvisMessage" class="form-message hidden"></div>
+      </div>
+      <aside class="jarvis-side">
+        <section class="panel"><div class="panel-head"><div><h2>O que o Jarvis guardou</h2><p>Estruturas criadas pelas suas mensagens.</p></div></div><div class="jarvis-metric-list">${cards.map(([label,value,sub]) => `<div><span>${esc(label)}</span><strong>${value}</strong><small>${esc(sub)}</small></div>`).join('')}</div></section>
+        <section class="panel jarvis-rules"><span class="eyebrow">REGRAS DE SEGURANCA</span><h3>Contexto primeiro. Acao depois.</h3><p>Gastos e notas podem ser registrados sem confirmacao. Agenda e outras acoes externas ficam como proposta ate voce aprovar.</p><div><span>Financeiro</span><b>Memoria para conciliar</b></div><div><span>Agenda</span><b>Confirmacao obrigatoria</b></div><div><span>Usuario</span><b>Isolado por login</b></div></section>
+      </aside>
+    </section>
+  </div>`
+  $('jarvisRetryLoad')?.addEventListener('click', () => { state.jarvis.loaded = false; state.jarvis.error = null; loadJarvisData(true) })
+  $('jarvisRefresh')?.addEventListener('click', () => loadJarvisData(true))
+  document.querySelectorAll('[data-jarvis-prompt]').forEach((b) => b.addEventListener('click', () => { $('jarvisInput').value = b.dataset.jarvisPrompt; $('jarvisInput').focus() }))
+  $('jarvisForm')?.addEventListener('submit', sendJarvisMessage)
+  requestAnimationFrame(() => { const chat = $('jarvisChat'); if (chat) chat.scrollTop = chat.scrollHeight })
+}
+
+async function sendJarvisMessage(e) {
+  e.preventDefault()
+  const input = $('jarvisInput')
+  const text = input?.value.trim()
+  if (!text) return
+  const btn = $('jarvisSend')
+  setBusy(btn, true, 'Pensando')
+  showInfo('jarvisMessage', '')
+  try {
+    const { data, error } = await supabase.functions.invoke('jarvis-core', { body: { message: text, channel: 'web', source: 'panel_simulator' } })
+    if (error) throw error
+    if (data?.error) throw new Error(data.error)
+    state.jarvis.engine = data?.engine || null
+    input.value = ''
+    await loadJarvisData(true)
+    if (data?.confirmation_required) toast('O Jarvis entendeu, mas essa acao precisa de confirmacao.', 'success')
+  } catch (err) {
+    showInfo('jarvisMessage', humanError(err))
+  } finally {
+    setBusy(btn, false)
+  }
 }
 
 boot()

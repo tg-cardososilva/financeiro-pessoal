@@ -33,10 +33,16 @@ Substitua no GitHub Pages:
 - Tooltip navegável também por teclado.
 
 
-## v2.3.0 - Jarvis Lab
+## v2.3.1 - Jarvis Lab
 - Novo item Jarvis no menu.
 - Simulador autenticado dentro do painel.
 - Conversa salva em jarvis_messages.
 - Chamada ao Edge Function jarvis-core.
 - OpenAI opcional via segredo OPENAI_API_KEY; sem a chave, usa regras locais apenas para validar o roteamento.
 - WhatsApp continua desacoplado e sera conectado depois pela identidade do usuario.
+
+
+## v2.3.1
+- Corrige acesso autenticado as tabelas do Jarvis no Supabase.
+- Evita loop de carregamento caso o Jarvis encontre erro.
+- Corrige estouro horizontal em Chrome a 100% e antecipa o reflow do dashboard em telas desktop menores.
