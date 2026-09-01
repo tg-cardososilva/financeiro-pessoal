@@ -342,6 +342,7 @@ function calcTotals(tx) {
     if (['income', 'yield'].includes(t.flow_type) && v > 0) {
       if (accountType === 'benefit') a.benefits += v
       else if (accountType === 'virtual') a.thirdPartyIncome += v
+      else if (t.metadata?.income_class === 'extraordinary') a.extraordinaryIncome += v
       else a.cashIncome += v
       if (t.flow_type === 'yield') a.yields += v
     }
@@ -351,7 +352,7 @@ function calcTotals(tx) {
     }
     if (t.flow_type === 'investment') a.invest += Math.abs(v)
     return a
-  }, { cashIncome: 0, benefits: 0, thirdPartyIncome: 0, expense: 0, invest: 0, yields: 0, benefitSpend: 0 })
+  }, { cashIncome: 0, extraordinaryIncome: 0, benefits: 0, thirdPartyIncome: 0, expense: 0, invest: 0, yields: 0, benefitSpend: 0 })
 }
 
 function categorySpend(tx) {
@@ -391,7 +392,7 @@ function dailySeries(tx) {
 function renderOverview() {
   const tx = visibleTransactions()
   const totals = calcTotals(tx)
-  const resources = totals.cashIncome + totals.benefits + totals.thirdPartyIncome
+  const resources = totals.cashIncome + totals.extraordinaryIncome + totals.benefits + totals.thirdPartyIncome
   const invMonth = investmentTotals()
   const netInvestment = invMonth.monthContribution - invMonth.monthWithdrawal
   const result = resources - totals.expense - netInvestment
@@ -412,7 +413,7 @@ function renderOverview() {
     </section>
 
     <section class="kpi-grid">
-      ${kpi('Entradas em dinheiro', money.format(totals.cashIncome), 'Receitas e rendimentos em contas', 'Dinheiro', '', 'cash_income')}
+      ${kpi('Renda em dinheiro', money.format(totals.cashIncome), totals.extraordinaryIncome ? `${money.format(totals.extraordinaryIncome)} em entrada extraordinária separada` : 'Sem empréstimos e transferências', 'Dinheiro', '', 'cash_income')}
       ${kpi('Benefícios recebidos', money.format(totals.benefits), `${money.format(totals.benefitSpend)} usados no mês`, 'Benefício', 'benefit', 'benefit')}
       ${kpi('Gastos reais', money.format(totals.expense), 'Sem transferências internas', 'Consumo', '', 'expense')}
       ${kpi('Resultado do mês', money.format(result), `${money.format(netInvestment)} direcionados líquidos a investimentos · inclui pagamentos por terceiros`, result >= 0 ? 'Positivo' : 'Atenção', result >= 0 ? 'positive' : '', 'result')}
@@ -488,9 +489,9 @@ function openTransactionDrilldown(spec = {}) {
   navigate('transactions')
 }
 function openResultBreakdown(totals, result, netInvestment = 0) {
-  const resources = totals.cashIncome + totals.benefits + totals.thirdPartyIncome
+  const resources = totals.cashIncome + totals.extraordinaryIncome + totals.benefits + totals.thirdPartyIncome
   const modal = $('modalHost')
-  modal.innerHTML = `<div class="modal-backdrop"><div class="modal"><div class="modal-head"><div><span class="eyebrow">COMPOSIÇÃO DO RESULTADO</span><h2>${esc(monthFmt.format(parseDate(`${state.month}-01`)))}</h2><div class="modal-sub">O resultado é formado pelos recursos do mês menos consumo e aportes.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="result-breakdown"><button type="button" data-result-drill="cash_income"><span>Entradas em dinheiro</span><strong>+ ${money.format(totals.cashIncome)}</strong></button><button type="button" data-result-drill="benefit"><span>Benefícios</span><strong>+ ${money.format(totals.benefits)}</strong></button><div><span>Recursos via terceiro</span><strong>+ ${money.format(totals.thirdPartyIncome)}</strong></div><button type="button" data-result-drill="expense"><span>Gastos reais</span><strong>− ${money.format(totals.expense)}</strong></button><div><span>Aportes líquidos (aportes − resgates)</span><strong>− ${money.format(netInvestment)}</strong></div><div class="result-total"><span>Resultado</span><strong>${money.format(result)}</strong></div></div></div></div>`
+  modal.innerHTML = `<div class="modal-backdrop"><div class="modal"><div class="modal-head"><div><span class="eyebrow">COMPOSIÇÃO DO RESULTADO</span><h2>${esc(monthFmt.format(parseDate(`${state.month}-01`)))}</h2><div class="modal-sub">O resultado é formado pelos recursos do mês menos consumo e aportes.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="result-breakdown"><button type="button" data-result-drill="cash_income"><span>Renda em dinheiro</span><strong>+ ${money.format(totals.cashIncome)}</strong></button>${totals.extraordinaryIncome ? `<button type="button" data-result-drill="extraordinary"><span>Entradas extraordinárias</span><strong>+ ${money.format(totals.extraordinaryIncome)}</strong></button>` : ''}<button type="button" data-result-drill="benefit"><span>Benefícios</span><strong>+ ${money.format(totals.benefits)}</strong></button><div><span>Recursos via terceiro</span><strong>+ ${money.format(totals.thirdPartyIncome)}</strong></div><button type="button" data-result-drill="expense"><span>Gastos reais</span><strong>− ${money.format(totals.expense)}</strong></button><div><span>Aportes líquidos (aportes − resgates)</span><strong>− ${money.format(netInvestment)}</strong></div><div class="result-total"><span>Resultado</span><strong>${money.format(result)}</strong></div></div></div></div>`
   $('closeModal')?.addEventListener('click', () => { modal.innerHTML = '' })
   modal.querySelectorAll('[data-result-drill]').forEach((b) => b.addEventListener('click', () => { modal.innerHTML = ''; openTransactionDrilldown({ mode: b.dataset.resultDrill }) }))
 }
@@ -546,7 +547,7 @@ function renderTransactions() {
       const statusMatch = filter === 'all' || (filter === 'needs_review' && t.review_status === 'needs_review') || (filter === 'expense' && t.flow_type === 'expense') || (filter === 'income' && ['income', 'yield'].includes(t.flow_type)) || (filter === 'grouped' && !!t.purchase_id)
       const txGroup = t.categories?.group_name || categoryById(t.category_id)?.group_name || ''
       const accountType = t.accounts?.account_type || accountById(t.account_id)?.account_type || ''
-      const modeMatch = !drillMode || (drillMode === 'cash_income' && ['income','yield'].includes(t.flow_type) && num(t.amount) > 0 && !t.is_internal_transfer && !['benefit','virtual'].includes(accountType)) || (drillMode === 'benefit' && accountType === 'benefit') || (drillMode === 'expense' && t.flow_type === 'expense')
+      const modeMatch = !drillMode || (drillMode === 'cash_income' && ['income','yield'].includes(t.flow_type) && num(t.amount) > 0 && !t.is_internal_transfer && !['benefit','virtual'].includes(accountType) && t.metadata?.income_class !== 'extraordinary') || (drillMode === 'extraordinary' && t.metadata?.income_class === 'extraordinary') || (drillMode === 'benefit' && accountType === 'benefit') || (drillMode === 'expense' && t.flow_type === 'expense')
       return (!q || hay.includes(q)) && (!acc || t.account_id === acc) && (!drillAccount || t.account_id === drillAccount) && (!cat || t.category_id === cat) && (!group || txGroup === group) && modeMatch && statusMatch
     })
     $('txList').innerHTML = rows.length ? rows.map((t) => transactionRow(t, { selectMode: state.selectionMode })).join('') : empty('Nenhuma transação com esses filtros.')
@@ -567,7 +568,7 @@ function renderTransactions() {
     const accountId = state.transactionDrilldown?.accountId
     const mode = state.transactionDrilldown?.mode
     const cat = categoryId ? categoryById(categoryId) : null
-    const modeLabel = ({cash_income:'Entradas em dinheiro',benefit:'Benefícios',expense:'Gastos reais'})[mode] || ''
+    const modeLabel = ({cash_income:'Renda em dinheiro',extraordinary:'Entradas extraordinárias',benefit:'Benefícios',expense:'Gastos reais'})[mode] || ''
     const label = cat ? `${cat.group_name} · ${cat.name}` : group || (accountId ? (accountById(accountId)?.name || 'Conta') : '') || modeLabel
     if (!label) { host.innerHTML = ''; return }
     host.innerHTML = `<div class="drilldown-banner"><div><span>Filtro vindo do dashboard</span><strong>${esc(label)}</strong><small>${count} lançamento(s) neste mês</small></div><button id="clearDrilldown" class="button small" type="button">× Limpar filtro</button></div>`
@@ -620,7 +621,7 @@ function openTransactionModal(id) {
       <label class="field-label">Valor usado no painel<input id="editAmount" inputmode="decimal" value="${Math.abs(num(t.amount)).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"><span class="tag-input-help">Use apenas o valor absoluto; o tipo define entrada ou saída.</span></label>
       <label class="field-label">Conta<select id="editAccount">${currentAccountOption}${state.accounts.map((a) => `<option value="${a.id}" ${a.id === t.account_id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
       <label class="field-label">Tipo<select id="editFlow"><option value="expense" ${t.flow_type === 'expense' ? 'selected' : ''}>Despesa</option><option value="income" ${t.flow_type === 'income' ? 'selected' : ''}>Receita</option><option value="yield" ${t.flow_type === 'yield' ? 'selected' : ''}>Rendimento</option><option value="transfer" ${t.flow_type === 'transfer' ? 'selected' : ''}>Transferência</option><option value="investment" ${t.flow_type === 'investment' ? 'selected' : ''}>Investimento</option><option value="adjustment" ${t.flow_type === 'adjustment' ? 'selected' : ''}>Ajuste</option></select></label>
-      <label class="field-label">Categoria<select id="editCategory"><option value="">Sem categoria</option>${relevantCategories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}<option value="__custom__">＋ Outro / criar categoria…</option></select></label><div id="customCategoryFields" class="custom-category-fields full-span hidden"><label class="field-label">Grupo<select id="customCategoryGroup">${[...new Set(relevantCategories.map((c) => c.group_name))].map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}<option value="Outros">Outros</option></select></label><label class="field-label">Nome da categoria<input id="customCategoryName" placeholder="Ex.: Mercado do condomínio"></label><div class="custom-learn-note"><strong>O sistema aprende com você.</strong><span>Ao salvar, lançamentos iguais recebem esta categoria e a regra vale para as próximas importações.</span></div></div>
+      <label class="field-label">Categoria<select id="editCategory"><option value="">Sem categoria</option>${relevantCategories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? 'selected' : ''}>${esc(c.group_name)} · ${esc(c.name)}</option>`).join('')}<option value="__custom__">＋ Outro / criar categoria…</option></select></label><div id="customCategoryFields" class="custom-category-fields full-span hidden"><label class="field-label">Grupo<select id="customCategoryGroup">${[...new Set(relevantCategories.map((c) => c.group_name))].map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}<option value="Outros">Outros</option></select></label><label class="field-label">Nome da categoria<input id="customCategoryName" placeholder="Ex.: Mercado do condomínio"></label><div class="custom-learn-note"><strong>Categoria personalizada</strong><span>Por padrão, somente este lançamento será alterado.</span></div><div class="toggle-row full-span"><div><strong>Aplicar também a lançamentos semelhantes</strong><p>Ative apenas quando esta descrição realmente significar sempre a mesma coisa.</p></div><label class="switch"><input id="customApplySimilar" type="checkbox"><span class="switch-track"></span></label></div></div>
       <label class="field-label full-span">Observação<textarea id="editNotes" placeholder="Contexto que ajude você no futuro">${esc(t.notes || '')}</textarea></label>
       <label class="field-label full-span">Tags<input id="editTags" value="${esc((t.tags || []).join(', '))}" placeholder="ex.: mercado, casa, viagem"><span class="tag-input-help">Separe as tags por vírgula.</span></label>
     </div>
@@ -673,14 +674,27 @@ function openTransactionModal(id) {
         const customName = $('customCategoryName').value.trim()
         const customGroup = $('customCategoryGroup').value || 'Outros'
         if (!customName) throw new Error('Escreva o nome da nova categoria.')
-        const acc = accountById(accountId) || (accountId === t.account_id ? t.accounts : null)
-        const matchField = t.merchant ? 'merchant' : 'description'
-        const { data: learned, error: learnError } = await supabase.rpc('create_category_rule_and_reclassify', {
-          p_group_name: customGroup, p_category_name: customName, p_kind: flow === 'income' || flow === 'yield' ? 'income' : flow === 'transfer' ? 'transfer' : flow === 'investment' ? 'investment' : 'expense',
-          p_institution: acc?.institution || '', p_match_field: matchField, p_pattern: rulePattern, p_flow_type: internal ? 'transfer' : flow, p_set_internal_transfer: internal
-        })
-        if (learnError) throw learnError
-        categoryId = learned?.category_id || null
+        const kind = flow === 'income' || flow === 'yield' ? 'income' : flow === 'transfer' ? 'transfer' : flow === 'investment' ? 'investment' : 'expense'
+        const applySimilar = !!$('customApplySimilar')?.checked
+        if (applySimilar) {
+          const acc = accountById(accountId) || (accountId === t.account_id ? t.accounts : null)
+          const matchField = t.merchant ? 'merchant' : 'description'
+          const { data: learned, error: learnError } = await supabase.rpc('create_category_rule_and_reclassify', {
+            p_group_name: customGroup, p_category_name: customName, p_kind: kind,
+            p_institution: acc?.institution || '', p_match_field: matchField, p_pattern: rulePattern, p_flow_type: internal ? 'transfer' : flow, p_set_internal_transfer: internal
+          })
+          if (learnError) throw learnError
+          categoryId = learned?.category_id || null
+        } else {
+          let existing = state.categories.find((c) => c.kind === kind && c.name.toLowerCase() === customName.toLowerCase() && c.group_name.toLowerCase() === customGroup.toLowerCase())
+          if (existing) categoryId = existing.id
+          else {
+            const { data: created, error: createError } = await supabase.from('categories').insert({ user_id: state.session.user.id, name: customName, group_name: customGroup, kind, active: true }).select('*').single()
+            if (createError) throw createError
+            categoryId = created?.id || null
+            if (created) state.categories.push(created)
+          }
+        }
         if (!categoryId) throw new Error('Não foi possível criar a categoria.')
       }
       const { error } = await supabase.from('transactions').update({
@@ -715,7 +729,7 @@ function openTransactionModal(id) {
         if (ruleError && ruleError.code !== '23505') throw ruleError
       }
       close()
-      toast(isCustomCategory ? 'Categoria criada e regra aplicada aos lançamentos iguais.' : 'Transação atualizada.', 'success')
+      toast(isCustomCategory && $('customApplySimilar')?.checked ? 'Categoria criada e aplicada aos lançamentos semelhantes.' : isCustomCategory ? 'Categoria criada apenas para este lançamento.' : 'Transação atualizada.', 'success')
       await loadData()
     } catch (err) {
       showInfo('txEditMessage', humanError(err))

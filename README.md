@@ -52,7 +52,13 @@ Depois aguarde a publicação e faça `Ctrl + F5`.
 - Reserva/resgate do Cofrinho reconciliados com movimentações de investimento já existentes.
 
 
-## v2.2.7
+## v2.2.8
 - Drill-down nos KPIs, categorias e contas do dashboard.
 - Filtros clicáveis em investimentos.
 - Preserva a conta original ao editar transações de contas encerradas.
+
+
+## v2.2.8
+- categorias personalizadas em edição afetam somente o lançamento atual por padrão;
+- aplicar a semelhantes virou opção explícita;
+- entradas extraordinárias ficam separadas da renda normal no dashboard.
