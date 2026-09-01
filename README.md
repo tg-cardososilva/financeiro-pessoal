@@ -31,3 +31,12 @@ Substitua no GitHub Pages:
 ## v2.2.11
 - Gráfico de Evolução financeira interativo: hover/toque mostra data e valor acumulado do dia.
 - Tooltip navegável também por teclado.
+
+
+## v2.3.0 - Jarvis Lab
+- Novo item Jarvis no menu.
+- Simulador autenticado dentro do painel.
+- Conversa salva em jarvis_messages.
+- Chamada ao Edge Function jarvis-core.
+- OpenAI opcional via segredo OPENAI_API_KEY; sem a chave, usa regras locais apenas para validar o roteamento.
+- WhatsApp continua desacoplado e sera conectado depois pela identidade do usuario.

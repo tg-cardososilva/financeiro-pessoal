@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=2.2.2" />
+  <link rel="stylesheet" href="./styles.css?v=2.3.0" />
 </head>
 <body>
   <div id="splash" class="splash" aria-live="polite">
@@ -76,6 +76,7 @@
         <button class="nav-button" data-view="investments"><span class="nav-icon">↗</span><span>Investimentos</span></button>
         <button class="nav-button" data-view="import"><span class="nav-icon">⇧</span><span>Importar extrato</span></button>
         <button class="nav-button" data-view="accounts"><span class="nav-icon">▣</span><span>Contas</span></button>
+        <button class="nav-button jarvis-nav" data-view="jarvis"><span class="nav-icon">&#10022;</span><span>Jarvis</span><span class="nav-badge jarvis-beta">LAB</span></button>
       </nav>
 
       <div class="sidebar-help">
@@ -98,7 +99,7 @@
           <button id="menuBtn" class="menu-button" type="button" aria-label="Abrir menu">☰</button>
           <div><span class="eyebrow">FINANÇAS PESSOAIS</span><h1 id="pageTitle">Visão geral</h1></div>
         </div>
-        <div class="top-actions">
+        <div id="financeTopActions" class="top-actions">
           <input id="monthPicker" class="month-picker" type="month" aria-label="Mês do painel">
           <button id="viewModeBtn" class="button subtle" type="button">Visão real</button>
           <button id="newEntryBtn" class="button primary" type="button">＋ Novo lançamento</button>
@@ -121,6 +122,6 @@
       }
     }, 10000);
   </script>
-  <script type="module" src="./app.js?v=2.2.2"></script>
+  <script type="module" src="./app.js?v=2.3.0"></script>
 </body>
 </html>
