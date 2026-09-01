@@ -37,6 +37,7 @@ const state = {
   realView: true,
   month: monthKey(new Date()),
   accounts: [],
+  accountBalances: [],
   categories: [],
   rules: [],
   transactions: [],
@@ -68,6 +69,12 @@ function parseDate(s) { const [y, m, d] = String(s).split('-').map(Number); retu
 function setHidden(el, hide) { if (el) el.classList.toggle('hidden', !!hide) }
 function displayDescription(t) { return t?.display_description?.trim() || t?.description || 'Movimentação' }
 function accountById(id) { return state.accounts.find((a) => a.id === id) }
+function balanceByAccountId(id) { return state.accountBalances.find((b) => b.account_id === id) || null }
+function accountBalanceLabel(a) {
+  const b = balanceByAccountId(a.id)
+  if (!b || b.current_balance == null) return { value: null, label: 'Saldo não confirmado', date: null }
+  return { value: num(b.current_balance), label: a.account_type === 'credit_card' ? 'Saldo / fatura atual' : 'Saldo atual', date: b.balance_date || null }
+}
 function categoryById(id) { return state.categories.find((c) => c.id === id) }
 function purchaseById(id) { return state.purchases.find((p) => p.id === id) }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0 }
@@ -254,8 +261,9 @@ async function loadData() {
     const user = state.session.user
     const { start, end } = monthRange()
     const monthDate = `${state.month}-01`
-    const [acc, cat, rules, tx, pur, profile, budget, invPos, invGoals, invMoves, invSnaps] = await Promise.all([
+    const [acc, balances, cat, rules, tx, pur, profile, budget, invPos, invGoals, invMoves, invSnaps] = await Promise.all([
       supabase.from('accounts').select('*').eq('active', true).order('created_at'),
+      supabase.from('account_current_balances').select('*'),
       supabase.from('categories').select('*').eq('active', true).order('group_name').order('name'),
       supabase.from('categorization_rules').select('*').eq('active', true).order('priority'),
       supabase.from('transactions').select('*, accounts(name,institution,account_type), categories(name,group_name,kind)').gte('transaction_date', start).lt('transaction_date', end).order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(1600),
@@ -267,9 +275,10 @@ async function loadData() {
       supabase.from('investment_movements').select('*, investment_positions(name), accounts(name,institution)').gte('movement_date', start).lt('movement_date', end).order('movement_date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('investment_snapshots').select('*').order('snapshot_date', { ascending: false }).limit(400)
     ])
-    const err = acc.error || cat.error || rules.error || tx.error || pur.error || profile.error || budget.error || invPos.error || invGoals.error || invMoves.error || invSnaps.error
+    const err = acc.error || balances.error || cat.error || rules.error || tx.error || pur.error || profile.error || budget.error || invPos.error || invGoals.error || invMoves.error || invSnaps.error
     if (err) throw err
     state.accounts = acc.data || []
+    state.accountBalances = balances.data || []
     state.categories = cat.data || []
     state.rules = rules.data || []
     state.transactions = tx.data || []
@@ -501,8 +510,10 @@ function accountIcon(a) {
   return `<div class="account-icon ${cls}">${icon}</div>`
 }
 function accountRow(a) {
-  const movement = state.transactions.filter((t) => t.account_id === a.id).reduce((s, t) => s + num(t.amount), 0)
-  return `<button type="button" class="account-row account-row-clickable" data-account-drill="${a.id}" title="Ver movimentações de ${esc(a.name)}">${accountIcon(a)}<div class="account-copy"><strong>${esc(a.name)}</strong><span>${esc(a.institution.replaceAll('_', ' '))}</span></div><strong>${money.format(movement)}</strong></button>`
+  const balance = accountBalanceLabel(a)
+  const value = balance.value == null ? '—' : money.format(balance.value)
+  const subtitle = balance.date ? `Saldo em ${dateFmt.format(parseDate(balance.date))}` : balance.label
+  return `<button type="button" class="account-row account-row-clickable" data-account-drill="${a.id}" title="Ver movimentações de ${esc(a.name)}">${accountIcon(a)}<div class="account-copy"><strong>${esc(a.name)}</strong><span>${esc(a.institution.replaceAll('_', ' '))} · ${esc(subtitle)}</span></div><strong>${value}</strong></button>`
 }
 function transactionRow(t, { selectMode = false } = {}) {
   const pos = num(t.amount) > 0
@@ -1386,6 +1397,13 @@ async function saveMercadoPagoStatement(entry) {
     const income=(mov||[]).reduce((sum,m)=>sum+(m.movement_type==='income'?num(m.amount):0),0)
     const current=Math.max(0,invested+income)
     const {error}=await supabase.from('investment_positions').update({invested_amount:invested,current_value:current}).eq('id',pos.id); if(error)throw error
+    await saveAccountBalanceSnapshot(pos.account_id,current,new Date().toISOString().slice(0,10),'system',{position_id:pos.id})
+  }
+  if(Number.isFinite(entry.statement?.final_balance)){
+    let snapshotDate=[...entry.rows.map((x)=>x.date).filter(Boolean)].sort().at(-1)
+    const periodEnd=entry.statement?.period?.[1]
+    if(periodEnd){ const [dd,mm,yyyy]=periodEnd.split('-'); snapshotDate=`${yyyy}-${mm}-${dd}` }
+    if(snapshotDate) await saveAccountBalanceSnapshot(account.id,entry.statement.final_balance,snapshotDate,'statement',{file_name:entry.file.name,document_type:'mercado_pago_pdf'})
   }
 }
 
@@ -1407,7 +1425,7 @@ async function saveFinancialDocumentEntry(entry) {
       if(!exists?.length){ const {error}=await supabase.from('investment_movements').insert({user_id:user.id,position_id:pos.id,account_id:account.id,movement_date:r.date,movement_type:r.type,amount:r.amount,notes:r.description||null,metadata:{source:'cofrinho_print',file_name:entry.file.name}}); if(error)throw error }
     }
     const invested=await refreshCofrinhoPrincipal(pos.id)
-    if(entry.balance!=null){ const snapshotDate=[...entry.rows.map((x)=>x.date).filter(Boolean)].sort().at(-1) || new Date().toISOString().slice(0,10); const {error}=await supabase.from('investment_positions').update({current_value:entry.balance,benchmark:entry.benchmark||pos.benchmark||null,invested_amount:invested}).eq('id',pos.id); if(error)throw error; const {error:sErr}=await supabase.from('investment_snapshots').upsert({user_id:user.id,position_id:pos.id,snapshot_date:snapshotDate,invested_principal:invested,market_value:entry.balance},{onConflict:'position_id,snapshot_date'}); if(sErr)throw sErr }
+    if(entry.balance!=null){ const snapshotDate=[...entry.rows.map((x)=>x.date).filter(Boolean)].sort().at(-1) || new Date().toISOString().slice(0,10); const {error}=await supabase.from('investment_positions').update({current_value:entry.balance,benchmark:entry.benchmark||pos.benchmark||null,invested_amount:invested}).eq('id',pos.id); if(error)throw error; const {error:sErr}=await supabase.from('investment_snapshots').upsert({user_id:user.id,position_id:pos.id,snapshot_date:snapshotDate,invested_principal:invested,market_value:entry.balance},{onConflict:'position_id,snapshot_date'}); if(sErr)throw sErr; await saveAccountBalanceSnapshot(account.id,entry.balance,snapshotDate,'document',{file_name:entry.file.name,document_type:'cofrinho'}) }
   } else if (entry.detectedType==='bank_pdf') {
     await saveMercadoPagoStatement(entry)
   } else if (entry.detectedType==='benefit') {
@@ -1726,6 +1744,18 @@ async function analyzeBatchImport() {
   } finally { setBusy(btn, false) }
 }
 async function sha256(text) { const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('') }
+function importedClosingBalance(rows=[]) {
+  const candidates=rows.map((r,i)=>({i,date:r.transaction_date,balance:parseMoneyInput(r.raw_data?.saldo ?? r.raw_data?.balance ?? '')})).filter((x)=>x.date&&Number.isFinite(x.balance))
+  if(!candidates.length)return null
+  const maxDate=candidates.reduce((m,x)=>x.date>m?x.date:m,candidates[0].date)
+  const same=candidates.filter((x)=>x.date===maxDate)
+  return same[same.length-1] || null
+}
+async function saveAccountBalanceSnapshot(accountId,balance,date,source='statement',metadata={}) {
+  if(!accountId||!date||!Number.isFinite(num(balance)))return
+  const {error}=await supabase.from('account_balance_snapshots').upsert({user_id:state.session.user.id,account_id:accountId,balance:num(balance),balance_date:date,source,is_confirmed:true,metadata},{onConflict:'account_id,balance_date,source'})
+  if(error)throw error
+}
 async function confirmBatchImport() {
   const imp = state.import
   const btn = $('confirmBatchImport')
@@ -1760,6 +1790,10 @@ async function confirmBatchImport() {
         }))
         const { error } = await supabase.from('transactions').insert(payload)
         if (error) throw error
+        if (account.institution === 'inter' && account.account_type === 'checking') {
+          const closing=importedClosingBalance(fileRows)
+          if(closing) await saveAccountBalanceSnapshot(account.id,closing.balance,closing.date,'statement',{file_name:entry.file.name,detected_source:entry.detected?.label||null})
+        }
         result.imported += payload.length
         result.filesImported++
       } catch (err) {
@@ -1909,15 +1943,17 @@ function openInvestmentValuationModal(positionId) {
 
 function renderAccounts() {
   const activity = (id) => state.transactions.filter((t) => t.account_id === id).reduce((s, t) => s + num(t.amount), 0)
-  $('mainArea').innerHTML = `<div class="content-stack"><section class="section-header"><div><span class="muted">Fontes financeiras</span><h2>Contas e benefícios</h2><p>Benefícios ficam separados da renda em dinheiro, mas entram na visão de consumo real.</p></div><div class="section-actions"><button id="addAccount" class="button primary" type="button">＋ Adicionar conta</button></div></section><section class="accounts-grid">${state.accounts.map((a) => `<button class="account-card" data-edit-account="${a.id}" type="button"><div class="account-card-top">${accountIcon(a)}<span class="panel-tag ${a.account_type === 'benefit' ? 'benefit' : ''}">${esc(accountTypeLabel(a.account_type))}</span></div><span class="institution">${esc(a.institution.replaceAll('_', ' '))}</span><h3>${esc(a.name)}</h3><div class="account-activity"><span>Movimento no mês</span><strong>${money.format(activity(a.id))}</strong></div><div class="account-footer"><span>${a.account_type === 'benefit' ? 'Não é renda bancária' : a.include_in_net_worth ? 'Inclui no patrimônio' : 'Conta de controle'}</span><span>Editar →</span></div></button>`).join('')}</section></div>`
+  const liquidTotal = state.accounts.filter((a) => !['credit_card','virtual'].includes(a.account_type)).reduce((sum,a)=>{ const b=accountBalanceLabel(a); return sum+(b.value==null?0:b.value) },0)
+  $('mainArea').innerHTML = `<div class="content-stack"><section class="section-header"><div><span class="muted">Posição financeira atual</span><h2>Contas e saldos</h2><p>Os saldos atravessam os meses. O movimento mensal continua separado para mostrar apenas o que aconteceu no período.</p></div><div class="section-actions"><button id="addAccount" class="button primary" type="button">＋ Adicionar conta</button></div></section><section class="accounts-summary-strip"><div><span>Saldos conhecidos</span><strong>${money.format(liquidTotal)}</strong><small>Contas, benefícios e reservas com saldo confirmado</small></div><div><span>Investimentos</span><strong>${money.format(state.investmentPositions.reduce((sum,p)=>sum+num(p.current_value),0))}</strong><small>Valor atual das posições</small></div></section><section class="accounts-grid">${state.accounts.map((a) => { const bal=accountBalanceLabel(a); const balanceText=bal.value==null?'—':money.format(bal.value); const dateText=bal.date?`Confirmado em ${fullDateFmt.format(parseDate(bal.date))}`:'Sem saldo confirmado'; return `<button class="account-card" data-edit-account="${a.id}" type="button"><div class="account-card-top">${accountIcon(a)}<span class="panel-tag ${a.account_type === 'benefit' ? 'benefit' : ''}">${esc(accountTypeLabel(a.account_type))}</span></div><span class="institution">${esc(a.institution.replaceAll('_', ' '))}</span><h3>${esc(a.name)}</h3><div class="account-current-balance"><span>${a.account_type==='credit_card'?'Saldo / fatura atual':'Saldo atual'}</span><strong>${balanceText}</strong><small>${esc(dateText)}</small></div><div class="account-activity"><span>Movimento em ${esc(monthFmt.format(parseDate(`${state.month}-01`)))}</span><strong>${money.format(activity(a.id))}</strong></div><div class="account-footer"><span>${a.account_type === 'benefit' ? 'Benefício separado da renda' : a.include_in_net_worth ? 'Inclui no patrimônio' : 'Conta de controle'}</span><span>Editar →</span></div></button>` }).join('')}</section></div>`
   $('addAccount').addEventListener('click', () => openAccountModal())
   document.querySelectorAll('[data-edit-account]').forEach((b) => b.addEventListener('click', () => openAccountModal(b.dataset.editAccount)))
 }
 function accountTypeLabel(type) { return ({ checking: 'Conta corrente', credit_card: 'Cartão', wallet: 'Carteira', savings: 'Reserva', investment: 'Investimento', virtual: 'Controle', benefit: 'Benefício' })[type] || type }
 function openAccountModal(id = null) {
   const a = id ? accountById(id) : null
+  const balance = a ? balanceByAccountId(a.id) : null
   const modal = $('modalHost')
-  modal.innerHTML = `<div class="modal-backdrop"><form id="accountForm" class="modal"><div class="modal-head"><div><span class="eyebrow">${a ? 'EDITAR CONTA' : 'NOVA CONTA'}</span><h2>${a ? esc(a.name) : 'Adicionar fonte financeira'}</h2></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label full-span">Nome<input id="accountName" value="${esc(a?.name || '')}" placeholder="Ex.: Cartão Alimentação"></label><label class="field-label">Instituição<input id="accountInstitution" value="${esc(a?.institution || '')}" placeholder="Ex.: inter"></label><label class="field-label">Tipo<select id="accountType"><option value="checking">Conta corrente</option><option value="credit_card">Cartão de crédito</option><option value="wallet">Carteira</option><option value="savings">Reserva / poupança</option><option value="investment">Investimento</option><option value="benefit">Benefício</option><option value="virtual">Conta de controle</option></select></label></div><div class="toggle-row"><div><strong>Incluir no patrimônio</strong><p>Benefícios e contas de controle normalmente ficam fora do patrimônio.</p></div><label class="switch"><input id="accountNetWorth" type="checkbox" ${a ? (a.include_in_net_worth ? 'checked' : '') : 'checked'}><span class="switch-track"></span></label></div><div id="accountMessage" class="form-message hidden"></div><div class="modal-actions"><span></span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveAccount" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
+  modal.innerHTML = `<div class="modal-backdrop"><form id="accountForm" class="modal"><div class="modal-head"><div><span class="eyebrow">${a ? 'EDITAR CONTA' : 'NOVA CONTA'}</span><h2>${a ? esc(a.name) : 'Adicionar fonte financeira'}</h2><div class="modal-sub">O saldo atual é independente do mês selecionado e pode ser atualizado automaticamente por extratos ou manualmente aqui.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label full-span">Nome<input id="accountName" value="${esc(a?.name || '')}" placeholder="Ex.: Cartão Alimentação"></label><label class="field-label">Instituição<input id="accountInstitution" value="${esc(a?.institution || '')}" placeholder="Ex.: inter"></label><label class="field-label">Tipo<select id="accountType"><option value="checking">Conta corrente</option><option value="credit_card">Cartão de crédito</option><option value="wallet">Carteira</option><option value="savings">Reserva / poupança</option><option value="investment">Investimento</option><option value="benefit">Benefício</option><option value="virtual">Conta de controle</option></select></label><label class="field-label">Saldo atual<input id="accountBalance" inputmode="decimal" value="${balance?.current_balance==null?'':num(balance.current_balance).toLocaleString('pt-BR',{minimumFractionDigits:2})}" placeholder="0,00"></label><label class="field-label">Data do saldo<input id="accountBalanceDate" type="date" value="${esc(balance?.balance_date || new Date().toISOString().slice(0,10))}"></label></div><div class="toggle-row"><div><strong>Incluir no patrimônio</strong><p>Benefícios e contas de controle normalmente ficam fora do patrimônio.</p></div><label class="switch"><input id="accountNetWorth" type="checkbox" ${a ? (a.include_in_net_worth ? 'checked' : '') : 'checked'}><span class="switch-track"></span></label></div><div id="accountMessage" class="form-message hidden"></div><div class="modal-actions"><span class="muted">Se deixar o saldo vazio, apenas os dados da conta serão alterados.</span><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="saveAccount" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
   $('accountType').value = a?.account_type || 'checking'
   const close = () => { modal.innerHTML = '' }
   $('closeModal').addEventListener('click', close); $('cancelModal').addEventListener('click', close)
@@ -1927,10 +1963,12 @@ function openAccountModal(id = null) {
     try {
       const payload = { name: $('accountName').value.trim(), institution: $('accountInstitution').value.trim().toLowerCase().replace(/\s+/g, '_') || 'manual', account_type: $('accountType').value, include_in_net_worth: $('accountNetWorth').checked }
       if (!payload.name) throw new Error('Informe um nome para a conta.')
-      const query = a ? supabase.from('accounts').update(payload).eq('id', a.id) : supabase.from('accounts').insert({ ...payload, user_id: state.session.user.id, currency: 'BRL', active: true })
-      const { error } = await query
-      if (error) throw error
-      close(); toast(a ? 'Conta atualizada.' : 'Conta adicionada.', 'success'); await loadData()
+      let accountId=a?.id || null
+      if(a){ const {error}=await supabase.from('accounts').update(payload).eq('id',a.id); if(error)throw error }
+      else { const {data,error}=await supabase.from('accounts').insert({ ...payload, user_id: state.session.user.id, currency: 'BRL', active: true }).select('id').single(); if(error)throw error; accountId=data.id }
+      const balanceText=$('accountBalance').value.trim()
+      if(balanceText){ const value=parseMoneyInput(balanceText); if(!Number.isFinite(value))throw new Error('Informe um saldo válido.'); const date=$('accountBalanceDate').value||new Date().toISOString().slice(0,10); const {error}=await supabase.from('account_balance_snapshots').upsert({user_id:state.session.user.id,account_id:accountId,balance:value,balance_date:date,source:'manual',is_confirmed:true,metadata:{updated_from:'account_editor'}},{onConflict:'account_id,balance_date,source'}); if(error)throw error }
+      close(); toast(a ? 'Conta e saldo atualizados.' : 'Conta adicionada.', 'success'); await loadData()
     } catch (err) { showInfo('accountMessage', humanError(err)); setBusy(btn, false) }
   })
 }
