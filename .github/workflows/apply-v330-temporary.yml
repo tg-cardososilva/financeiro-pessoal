@@ -1,4 +1,4 @@
-name: Temporary apply v3.3.0 patch
+name: Temporary harden v3.3.0 calendar routing
 
 on:
   push:
@@ -17,45 +17,39 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: v3.3.0-agenda-real
-      - name: Tighten guarded patch target
+      - name: Preserve explicit agenda commands as writes
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('scripts/v330_patch.py')
+          p=Path('app.js')
           text=p.read_text()
-          old='''app = replace_once(\n    app,\n    "    await loadJarvisData(true)\\n",\n    "    await Promise.all([loadJarvisData(true), loadCalendarData(true)])\\n",\n    'calendar refresh after confirmed action',\n)\n'''
-          new='''action_start = app.find("async function executeJarvisCalendarAction(actionId) {")\naction_end = app.find("async function testJarvisWhatsApp()", action_start)\nif action_start < 0 or action_end < 0:\n    raise SystemExit('calendar action boundaries not found')\naction_block = app[action_start:action_end]\nif action_block.count("    await loadJarvisData(true)\\n") != 1:\n    raise SystemExit('calendar action refresh target is not unique')\naction_block = action_block.replace("    await loadJarvisData(true)\\n", "    await Promise.all([loadJarvisData(true), loadCalendarData(true)])\\n", 1)\napp = app[:action_start] + action_block + app[action_end:]\n'''
+          old="  const writeIntent = /\\b(agende|agendar|marque|marcar|crie|criar|adicione|adicionar|cancele|cancelar|remarque|remarcar|mude|mudar|altere|alterar|apague|apagar|remova|remover)\\b/.test(text)\n"
+          new="  const writeIntent = /\\b(agende|agendar|marque|marcar|crie|criar|adicione|adicionar|cancele|cancelar|remarque|remarcar|mude|mudar|altere|alterar|apague|apagar|remova|remover)\\b/.test(text)\n    || /^(jarvis[,:]?\\s+)?agenda\\s+(uma|um|a|o|reuniao|evento|consulta|compromisso)\\b/.test(text)\n"
           if text.count(old) != 1:
-              raise SystemExit('guard patch block not found exactly once')
+              raise SystemExit(f'write router target count={text.count(old)}')
           p.write_text(text.replace(old,new,1))
           PY
-      - name: Apply guarded patch
-        run: python3 scripts/v330_patch.py
       - name: Validate JavaScript syntax
         run: node --check app.js
       - name: Validate diff whitespace
         run: git diff --check
-      - name: Verify read-only calendar loader
+      - name: Verify routing and read-only loader
         run: |
           python3 - <<'PY'
           from pathlib import Path
           text=Path('app.js').read_text()
+          assert "agenda\\s+(uma|um|a|o|reuniao|evento|consulta|compromisso)" in text
           start=text.index('async function loadCalendarData(force = false) {')
           end=text.index('function calendarSourceLabel', start)
           block=text[start:end]
-          forbidden=['.delete()', '.insert(', '.update(', '.upsert(', '.rpc(']
-          assert not any(x in block for x in forbidden), block
+          assert not any(x in block for x in ['.delete()', '.insert(', '.update(', '.upsert(', '.rpc('])
           assert "supabase.functions.invoke('jarvis-calendar-read'" in block
-          assert 'scheduledCalendarActions' not in text
-          assert 'Jarvis · aguardando confirmação' in text
-          assert "shouldUseCalendarRead" in text
-          assert "jarvis-calendar-query" in text
-          print('calendar read path validated')
+          print('routing and read-only loader validated')
           PY
-      - name: Commit v3.3.0 branch changes
+      - name: Commit routing fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app.js index.html styles.css README.md
-          git commit -m "feat: add real Google Calendar agenda to Home v3.3.0"
+          git add app.js
+          git commit -m "fix: keep explicit agenda commands on confirmation flow"
           git push origin HEAD:v3.3.0-agenda-real
