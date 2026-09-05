@@ -247,3 +247,42 @@ input:focus,select:focus,textarea:focus,button:focus-visible{box-shadow:0 0 0 3p
 @media(max-width:880px){.personal-hero{min-height:170px;padding:22px}.home-focus-grid,.personal-two-col,.personal-two-col.wide-main{grid-template-columns:1fr}.home-module-grid{grid-template-columns:1fr}.home-module-grid>article:last-child{grid-column:auto}.integration-strip{grid-template-columns:1fr 1fr}.quick-capture{align-items:stretch;flex-direction:column}.quick-capture form{grid-template-columns:minmax(0,1fr) auto;width:100%}.projects-grid{grid-template-columns:1fr}.project-vision{align-items:flex-start;flex-direction:column}.project-vision-flow{justify-content:flex-start}.jarvis-dock{right:16px;bottom:16px}.jarvis-side{grid-template-columns:1fr 1fr}}
 @media(max-width:620px){.personal-hero{align-items:flex-start;flex-direction:column}.personal-hero h2{font-size:31px}.personal-hero-cta{width:100%}.integration-strip{grid-template-columns:1fr}.notes-grid{grid-template-columns:1fr}.quick-capture form{grid-template-columns:1fr}.section-intro{align-items:flex-start;flex-direction:column}.agenda-list article{grid-template-columns:44px minmax(0,1fr)}.agenda-list article>a{grid-column:2}.task-list article{grid-template-columns:28px minmax(0,1fr)}.status-pill{grid-column:2;justify-self:start}.jarvis-side{grid-template-columns:1fr}.project-vision-flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr}.jarvis-dock b{display:none}.jarvis-dock{width:46px;padding:0;justify-content:center}}
 @media(max-height:840px) and (min-width:881px){.jarvis-sidebar-help{display:none}.sidebar-roadmap{padding-bottom:8px}.finance-caption,.roadmap-caption{margin-top:8px}.nav-button{min-height:38px}}
+
+/* v3.1.0 - identidade visual viva do Jarvis */
+.jarvis-brand-avatar{overflow:hidden;padding:0;background:#071722!important;border:1px solid rgba(83,219,255,.45);box-shadow:0 0 18px rgba(38,203,255,.18)}
+.jarvis-brand-avatar img,.jarvis-nav-avatar img,.jarvis-dock-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.jarvis-nav-avatar{width:24px!important;height:24px!important;border-radius:50%;overflow:hidden;background:#071722;border:1px solid rgba(81,216,255,.34);box-shadow:0 0 12px rgba(34,201,255,.14)}
+.jarvis-dock{overflow:visible}.jarvis-dock-avatar{width:30px;height:30px;border-radius:50%;overflow:hidden;border:1px solid rgba(87,222,255,.42);box-shadow:0 0 0 4px rgba(49,203,255,.08),0 0 16px rgba(49,203,255,.22);animation:jarvisDockPulse 3.2s ease-in-out infinite}.jarvis-dock b{font-weight:700}
+@keyframes jarvisDockPulse{0%,100%{box-shadow:0 0 0 4px rgba(49,203,255,.07),0 0 14px rgba(49,203,255,.18)}50%{box-shadow:0 0 0 7px rgba(49,203,255,.03),0 0 24px rgba(49,203,255,.34)}}
+
+.jarvis-presence{--jp-accent:#32d7ff;--jp-accent-2:#1597ff;position:relative;width:220px;height:220px;display:grid;place-items:center;isolation:isolate;flex:0 0 auto}
+.jarvis-presence.hero-presence{width:208px;height:208px}
+.jarvis-presence-avatar{width:72%;height:72%;border-radius:50%;overflow:hidden;position:relative;z-index:4;background:#06131d;border:1px solid rgba(86,220,255,.48);box-shadow:0 0 0 7px rgba(24,195,255,.06),0 0 34px rgba(22,196,255,.27);animation:jarvisBreathe 4.8s ease-in-out infinite}
+.jarvis-presence-avatar img{width:100%;height:100%;object-fit:cover;display:block;transform:scale(1.03)}
+.jarvis-presence-orbit,.jarvis-presence-scan{position:absolute;border-radius:50%;inset:8%;pointer-events:none}
+.jarvis-presence-orbit{z-index:1;border:1px solid rgba(80,221,255,.28)}
+.jarvis-presence-orbit.orbit-a{inset:2%;border-style:dashed;animation:jarvisOrbit 18s linear infinite}
+.jarvis-presence-orbit.orbit-b{inset:13%;border-color:rgba(80,221,255,.18);border-top-color:rgba(80,221,255,.8);border-right-color:rgba(80,221,255,.42);animation:jarvisOrbitReverse 9s linear infinite}
+.jarvis-presence-scan{inset:4%;z-index:2;background:conic-gradient(from 180deg,transparent 0 70%,rgba(45,215,255,.12) 76%,rgba(45,215,255,.45) 79%,transparent 82%);filter:blur(.2px);animation:jarvisScan 5.5s linear infinite;opacity:.75}
+.jarvis-presence-status{position:absolute;z-index:6;bottom:1px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:7px;white-space:nowrap;padding:7px 10px;border-radius:999px;background:rgba(5,19,29,.88);border:1px solid rgba(106,225,255,.25);box-shadow:0 8px 24px rgba(4,18,28,.24);backdrop-filter:blur(8px);color:#e8fbff;font-size:9px;letter-spacing:.02em}
+.jarvis-presence-status span{width:7px;height:7px;border-radius:50%;background:#68d7a6;box-shadow:0 0 0 4px rgba(104,215,166,.08),0 0 12px rgba(104,215,166,.45)}
+.jarvis-presence-status b{font-weight:700}
+.jarvis-audio-wave{position:absolute;z-index:7;bottom:33px;left:50%;transform:translateX(-50%);height:20px;display:flex;align-items:center;gap:3px;opacity:0;transition:opacity .22s ease}
+.jarvis-audio-wave i{display:block;width:3px;height:5px;border-radius:99px;background:#75eaff;box-shadow:0 0 8px rgba(68,220,255,.48);animation:jarvisWave .8s ease-in-out infinite alternate}.jarvis-audio-wave i:nth-child(2){animation-delay:.12s}.jarvis-audio-wave i:nth-child(3){animation-delay:.24s}.jarvis-audio-wave i:nth-child(4){animation-delay:.36s}.jarvis-audio-wave i:nth-child(5){animation-delay:.48s}
+.jarvis-state-listening .jarvis-audio-wave,.jarvis-state-speaking .jarvis-audio-wave{opacity:1}
+.jarvis-state-thinking .jarvis-presence-orbit.orbit-a{animation-duration:3.2s;border-color:rgba(104,226,255,.48)}
+.jarvis-state-thinking .jarvis-presence-orbit.orbit-b{animation-duration:1.8s;box-shadow:0 0 22px rgba(34,210,255,.12)}
+.jarvis-state-thinking .jarvis-presence-avatar{box-shadow:0 0 0 7px rgba(24,195,255,.08),0 0 46px rgba(22,196,255,.44)}
+.jarvis-state-listening .jarvis-presence-status span{background:#36d6ff;box-shadow:0 0 0 4px rgba(54,214,255,.08),0 0 13px rgba(54,214,255,.55)}
+.jarvis-state-speaking .jarvis-presence-avatar{animation:jarvisSpeak 1s ease-in-out infinite}.jarvis-state-speaking .jarvis-presence-status span{background:#8ee7ff}
+.jarvis-state-attention{--jp-accent:#ffc16b;--jp-accent-2:#e99b42}.jarvis-state-attention .jarvis-presence-orbit{border-color:rgba(255,193,107,.38)}.jarvis-state-attention .jarvis-presence-orbit.orbit-b{border-top-color:#ffc16b}.jarvis-state-attention .jarvis-presence-avatar{border-color:rgba(255,193,107,.55);box-shadow:0 0 0 7px rgba(255,182,82,.06),0 0 34px rgba(255,166,64,.28)}.jarvis-state-attention .jarvis-presence-status{border-color:rgba(255,193,107,.3)}.jarvis-state-attention .jarvis-presence-status span{background:#ffc16b;box-shadow:0 0 0 4px rgba(255,193,107,.08),0 0 12px rgba(255,193,107,.48)}
+@keyframes jarvisBreathe{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-2px) scale(1.012)}}
+@keyframes jarvisSpeak{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-1px) scale(1.018)}}
+@keyframes jarvisOrbit{to{transform:rotate(360deg)}}@keyframes jarvisOrbitReverse{to{transform:rotate(-360deg)}}@keyframes jarvisScan{to{transform:rotate(360deg)}}@keyframes jarvisWave{from{height:4px}to{height:17px}}
+
+.personal-hero-with-jarvis{align-items:center;min-height:230px;padding-right:24px}.personal-hero-copy{max-width:720px}.personal-hero-copy .personal-hero-cta{margin-top:18px}.personal-hero-ai{display:grid;justify-items:center;gap:4px;position:relative;z-index:2;margin-right:8px}.personal-hero-ai>small{font-size:9px;color:#a9c6d5;margin-top:-2px}
+.jarvis-hero-with-face{align-items:center;padding-top:18px;padding-bottom:18px}.jarvis-hero-with-face .jarvis-hero-copy{max-width:760px}.jarvis-hero-with-face .jarvis-statuses{justify-content:flex-start;margin-top:16px}.jarvis-hero-with-face .jarvis-presence-status{background:rgba(5,19,29,.72)}
+
+@media(max-width:900px){.personal-hero-with-jarvis{align-items:flex-start}.personal-hero-ai{margin-right:-8px}.jarvis-presence.hero-presence{width:170px;height:170px}}
+@media(max-width:720px){.personal-hero-with-jarvis{display:grid;grid-template-columns:1fr;padding:22px}.personal-hero-ai{justify-self:center;margin:0}.personal-hero-copy .personal-hero-cta{width:100%}.jarvis-hero-with-face{display:grid!important;grid-template-columns:1fr!important}.jarvis-hero-with-face .jarvis-presence{justify-self:center}.jarvis-presence.hero-presence{width:180px;height:180px}}
+@media(prefers-reduced-motion:reduce){.jarvis-presence-avatar,.jarvis-presence-orbit,.jarvis-presence-scan,.jarvis-audio-wave i,.jarvis-dock-avatar{animation:none!important}.jarvis-audio-wave{display:none}}

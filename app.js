@@ -2335,21 +2335,59 @@ function bindPersonalNav() {
   document.querySelectorAll('[data-personal-nav]').forEach((b) => b.addEventListener('click', () => navigate(b.dataset.personalNav)))
 }
 
+const JARVIS_VISUAL_LABELS = {
+  idle: 'Jarvis online',
+  listening: 'Ouvindo você',
+  thinking: 'Pensando',
+  speaking: 'Respondendo',
+  attention: 'Aguardando confirmação'
+}
+
+function jarvisPresenceMarkup(visualState = 'idle', variant = 'default') {
+  const safeState = JARVIS_VISUAL_LABELS[visualState] ? visualState : 'idle'
+  return `<div class="jarvis-presence ${variant === 'hero' ? 'hero-presence' : ''} jarvis-state-${safeState}" data-jarvis-presence data-jarvis-visual-state="${safeState}">
+    <div class="jarvis-presence-orbit orbit-a"></div><div class="jarvis-presence-orbit orbit-b"></div><div class="jarvis-presence-scan"></div>
+    <div class="jarvis-presence-avatar"><img src="./assets/jarvis-avatar.png" alt="Jarvis, assistente pessoal"></div>
+    <div class="jarvis-audio-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="jarvis-presence-status"><span></span><b data-jarvis-state-label>${esc(JARVIS_VISUAL_LABELS[safeState])}</b></div>
+  </div>`
+}
+
+function setJarvisVisualState(next = 'idle', holdMs = 0) {
+  const safe = JARVIS_VISUAL_LABELS[next] ? next : 'idle'
+  document.querySelectorAll('[data-jarvis-presence]').forEach((el) => {
+    Object.keys(JARVIS_VISUAL_LABELS).forEach((stateName) => el.classList.remove(`jarvis-state-${stateName}`))
+    el.classList.add(`jarvis-state-${safe}`)
+    el.dataset.jarvisVisualState = safe
+    const label = el.querySelector('[data-jarvis-state-label]')
+    if (label) label.textContent = JARVIS_VISUAL_LABELS[safe]
+  })
+  if (holdMs > 0) {
+    clearTimeout(window.__jarvisVisualTimer)
+    window.__jarvisVisualTimer = setTimeout(() => {
+      const hasPending = state.jarvis.actions.some((x) => x.status === 'proposed')
+      setJarvisVisualState(hasPending ? 'attention' : 'idle')
+    }, holdMs)
+  }
+}
+
 async function sendJarvisQuick(message, button = null) {
   const text = String(message || '').trim()
   if (!text) return false
   setBusy(button, true, 'Enviando')
+  setJarvisVisualState('thinking')
   try {
     const { data, error } = await supabase.functions.invoke('jarvis-core', { body: { message: text, channel: 'web', source: `panel_${state.view}` } })
     if (error) throw error
     if (data?.error) throw new Error(data.error)
     state.jarvis.engine = data?.engine || state.jarvis.engine
     await loadJarvisData(true)
-    if (data?.confirmation_required) toast('Ação preparada e aguardando sua confirmação.', 'success')
-    else toast('Jarvis atualizou seu ambiente.', 'success')
+    if (data?.confirmation_required) { toast('Ação preparada e aguardando sua confirmação.', 'success'); setJarvisVisualState('attention') }
+    else { toast('Jarvis atualizou seu ambiente.', 'success'); setJarvisVisualState('speaking', 1400) }
     return true
   } catch (err) {
     toast(humanError(err), 'error')
+    setJarvisVisualState('idle')
     setBusy(button, false)
     return false
   }
@@ -2381,9 +2419,9 @@ function renderHome() {
   if (!attention.length) attention.push('Nenhuma pendência crítica detectada agora')
 
   $('mainArea').innerHTML = `<div class="content-stack personal-home">
-    <section class="personal-hero">
-      <div><span class="eyebrow">${esc(new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).format(now).toUpperCase())}</span><h2>${esc(greeting)}, ${esc(name)}.</h2><p>Este é o resumo do que merece sua atenção. O financeiro agora é uma parte do seu ambiente, não o ambiente inteiro.</p></div>
-      <button class="button primary personal-hero-cta" data-personal-nav="jarvis" type="button">✦ Perguntar ao Jarvis</button>
+    <section class="personal-hero personal-hero-with-jarvis">
+      <div class="personal-hero-copy"><span class="eyebrow">${esc(new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).format(now).toUpperCase())}</span><h2>${esc(greeting)}, ${esc(name)}.</h2><p>Este é o resumo do que merece sua atenção. O financeiro agora é uma parte do seu ambiente, não o ambiente inteiro.</p><button class="button primary personal-hero-cta" data-personal-nav="jarvis" type="button">Falar com Jarvis</button></div>
+      <div class="personal-hero-ai">${jarvisPresenceMarkup(proposedActions.length ? 'attention' : 'idle', 'hero')}<small>${proposedActions.length ? `${proposedActions.length} ação${proposedActions.length > 1 ? 'ões' : ''} esperando você` : 'Pronto para ajudar'}</small></div>
     </section>
 
     ${state.jarvis.loading && !state.jarvis.loaded ? personalLoading() : ''}
@@ -2509,9 +2547,9 @@ function renderJarvis() {
   const loadError = state.jarvis.error ? `<div class="error-banner jarvis-load-error" role="alert"><span>${esc(state.jarvis.error)}</span><button id="jarvisRetryLoad" type="button">Tentar novamente</button></div>` : ''
   $('mainArea').innerHTML = `<div class="content-stack jarvis-view jarvis-v3-view">
     ${loadError}
-    <section class="jarvis-hero jarvis-v3-hero">
-      <div class="jarvis-hero-copy"><span class="eyebrow">SEU ASSISTENTE PESSOAL</span><h2>Converse. O Jarvis organiza o resto.</h2><p>Uma única conversa para consultar seu ambiente, registrar contexto, preparar ações e conectar agenda, finanças, projetos e, em breve, WhatsApp, Drive e lugares.</p></div>
-      <div class="jarvis-statuses"><span class="jarvis-status ${hasOpenAI ? 'online' : 'local'}"><i></i>${hasOpenAI ? 'IA conectada' : 'IA disponível'}</span><span class="jarvis-status ${google ? 'online' : 'waiting'}"><i></i>Calendar ${google ? 'conectado' : 'pendente'}</span><span class="jarvis-status waiting"><i></i>WhatsApp em produção</span></div>
+    <section class="jarvis-hero jarvis-v3-hero jarvis-hero-with-face">
+      <div class="jarvis-hero-copy"><span class="eyebrow">SEU ASSISTENTE PESSOAL</span><h2>Converse. O Jarvis organiza o resto.</h2><p>Uma única conversa para consultar seu ambiente, registrar contexto, preparar ações e conectar agenda, finanças, projetos e, em breve, WhatsApp, Drive e lugares.</p><div class="jarvis-statuses"><span class="jarvis-status ${hasOpenAI ? 'online' : 'local'}"><i></i>${hasOpenAI ? 'IA conectada' : 'IA disponível'}</span><span class="jarvis-status ${google ? 'online' : 'waiting'}"><i></i>Calendar ${google ? 'conectado' : 'pendente'}</span><span class="jarvis-status waiting"><i></i>WhatsApp em produção</span></div></div>
+      ${jarvisPresenceMarkup(pendingActions ? 'attention' : 'idle', 'hero')}
     </section>
     <section class="jarvis-layout jarvis-v3-layout">
       <div class="panel jarvis-chat-panel">
@@ -2553,7 +2591,10 @@ function renderJarvis() {
   document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
   document.querySelectorAll('[data-jarvis-prompt]').forEach((b) => b.addEventListener('click', () => { $('jarvisInput').value = b.dataset.jarvisPrompt; $('jarvisInput').focus() }))
   $('jarvisForm')?.addEventListener('submit', sendJarvisMessage)
-  requestAnimationFrame(() => { const chat = $('jarvisChat'); if (chat) chat.scrollTop = chat.scrollHeight })
+  $('jarvisInput')?.addEventListener('focus', () => setJarvisVisualState('listening'))
+  $('jarvisInput')?.addEventListener('input', () => setJarvisVisualState('listening'))
+  $('jarvisInput')?.addEventListener('blur', () => { if (!$('jarvisInput')?.value.trim()) setJarvisVisualState(pendingActions ? 'attention' : 'idle') })
+  requestAnimationFrame(() => { const chat = $('jarvisChat'); if (chat) chat.scrollTop = chat.scrollHeight; setJarvisVisualState(pendingActions ? 'attention' : 'idle') })
 }
 
 async function sendJarvisMessage(e) {
@@ -2563,6 +2604,7 @@ async function sendJarvisMessage(e) {
   if (!text) return
   const btn = $('jarvisSend')
   setBusy(btn, true, 'Pensando')
+  setJarvisVisualState('thinking')
   showInfo('jarvisMessage', '')
   try {
     const { data, error } = await supabase.functions.invoke('jarvis-core', { body: { message: text, channel: 'web', source: 'panel_simulator' } })
@@ -2571,9 +2613,11 @@ async function sendJarvisMessage(e) {
     state.jarvis.engine = data?.engine || null
     input.value = ''
     await loadJarvisData(true)
-    if (data?.confirmation_required) toast('O Jarvis entendeu, mas essa acao precisa de confirmacao.', 'success')
+    if (data?.confirmation_required) { toast('O Jarvis entendeu, mas essa acao precisa de confirmacao.', 'success'); setJarvisVisualState('attention') }
+    else setJarvisVisualState('speaking', 1500)
   } catch (err) {
     showInfo('jarvisMessage', humanError(err))
+    setJarvisVisualState('idle')
   } finally {
     setBusy(btn, false)
   }
