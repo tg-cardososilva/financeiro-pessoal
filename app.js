@@ -2531,7 +2531,7 @@ function calendarEventStartDate(event) {
   if (!event?.start) return null
   if (event.all_day && /^\d{4}-\d{2}-\d{2}$/.test(String(event.start))) {
     const [y,m,d] = event.start.split('-').map(Number)
-    return new Date(y, m - 1, d, 12)
+    return new Date(Date.UTC(y, m - 1, d, 12))
   }
   const date = new Date(event.start)
   return Number.isNaN(date.getTime()) ? null : date
@@ -2548,6 +2548,18 @@ function calendarEventDateLabel(event) {
   const date = calendarEventStartDate(event)
   if (!date) return '--'
   return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, day: '2-digit', month: 'short' }).format(date)
+}
+
+function calendarEventDayLabel(event) {
+  const date = calendarEventStartDate(event)
+  if (!date) return '--'
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, day: '2-digit' }).format(date)
+}
+
+function calendarEventMonthLabel(event) {
+  const date = calendarEventStartDate(event)
+  if (!date) return ''
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, month: 'short' }).format(date)
 }
 
 function dedupeCalendarEvents(items = []) {
@@ -2738,7 +2750,7 @@ function renderAgenda() {
       : state.calendar.error
         ? `<div class="calendar-state-card error"><strong>Leitura do Calendar indisponível.</strong><span>${esc(state.calendar.error)}</span><button id="agendaCalendarRetry" class="button small" type="button">Tentar novamente</button></div>`
         : events.length
-          ? events.map((event) => `<article><div class="agenda-date"><strong>${esc(calendarEventDateLabel(event).split(' ')[0] || '--')}</strong><span>${esc(calendarEventDateLabel(event).split(' ')[1] || '')}</span></div><div><strong>${esc(event.title || 'Compromisso')}</strong><span>${esc(calendarEventTimeLabel(event))}${event.location ? ` · ${esc(event.location)}` : ''}</span><small>Google Calendar</small></div>${event.html_link ? `<a href="${esc(event.html_link)}" target="_blank" rel="noopener">Abrir ↗</a>` : ''}</article>`).join('')
+          ? events.map((event) => `<article><div class="agenda-date"><strong>${esc(calendarEventDayLabel(event))}</strong><span>${esc(calendarEventMonthLabel(event))}</span></div><div><strong>${esc(event.title || 'Compromisso')}</strong><span>${esc(calendarEventTimeLabel(event))}${event.location ? ` · ${esc(event.location)}` : ''}</span><small>Google Calendar</small></div>${event.html_link ? `<a href="${esc(event.html_link)}" target="_blank" rel="noopener">Abrir ↗</a>` : ''}</article>`).join('')
           : '<div class="personal-empty"><strong>Nenhum compromisso nos próximos 14 dias.</strong><span>A leitura está conectada ao Google Calendar.</span></div>'
   $('mainArea').innerHTML = `<div class="content-stack personal-section">
     <section class="section-intro"><div><span class="eyebrow">AGENDA</span><h2>Tempo com contexto.</h2><p>Compromissos reais do Google Calendar e propostas do Jarvis em camadas separadas.</p></div><button id="agendaAskJarvis" class="button primary" type="button">✦ Criar compromisso</button></section>
