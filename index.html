@@ -8,17 +8,17 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=3.1.1" />
+  <link rel="stylesheet" href="./styles.css?v=3.2.0" />
 </head>
 <body>
   <div id="splash" class="splash" aria-live="polite">
-    <div class="brand-orb jarvis-orb jarvis-brand-avatar"><img src="./assets/jarvis-avatar.png" alt="Jarvis"></div>
+    <div class="brand-orb jarvis-orb jarvis-brand-avatar"><img src="./jarvis-avatar.png" alt="Jarvis"></div>
     <div class="splash-copy"><strong>Jarvis</strong><span>Preparando seu ambiente pessoal...</span></div>
   </div>
 
   <section id="authView" class="auth-shell hidden">
     <div class="auth-story jarvis-auth-story">
-      <div class="auth-brand"><div class="brand-orb light jarvis-orb jarvis-brand-avatar"><img src="./assets/jarvis-avatar.png" alt="Jarvis"></div><span>Jarvis</span></div>
+      <div class="auth-brand"><div class="brand-orb light jarvis-orb jarvis-brand-avatar"><img src="./jarvis-avatar.png" alt="Jarvis"></div><span>Jarvis</span></div>
       <div class="auth-story-copy">
         <span class="eyebrow inverse">AMBIENTE PESSOAL PRIVADO</span>
         <h1>Sua vida organizada em um único lugar.</h1>
@@ -33,7 +33,7 @@
 
     <div class="auth-form-side">
       <form id="authForm" class="auth-card">
-        <div class="mobile-brand"><div class="brand-orb jarvis-orb jarvis-brand-avatar"><img src="./assets/jarvis-avatar.png" alt="Jarvis"></div><span>Jarvis</span></div>
+        <div class="mobile-brand"><div class="brand-orb jarvis-orb jarvis-brand-avatar"><img src="./jarvis-avatar.png" alt="Jarvis"></div><span>Jarvis</span></div>
         <span class="eyebrow">ACESSO SEGURO</span>
         <h2 id="authTitle">Entrar no Jarvis</h2>
         <p id="authSubtitle" class="muted">Use seu e-mail e senha para acessar seu ambiente pessoal.</p>
@@ -64,14 +64,14 @@
   <div id="appView" class="app-shell hidden">
     <aside id="sidebar" class="sidebar jarvis-sidebar">
       <div class="sidebar-head">
-        <div class="sidebar-brand"><div class="brand-orb light jarvis-orb jarvis-brand-avatar"><img src="./assets/jarvis-avatar.png" alt="Jarvis"></div><span>Jarvis</span></div>
+        <div class="sidebar-brand"><div class="brand-orb light jarvis-orb jarvis-brand-avatar"><img src="./jarvis-avatar.png" alt="Jarvis"></div><span>Jarvis</span></div>
         <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="Fechar menu">×</button>
       </div>
 
       <div class="sidebar-caption">SEU AMBIENTE</div>
       <nav class="sidebar-nav" aria-label="Navegação principal">
         <button class="nav-button active" data-view="home"><span class="nav-icon">⌂</span><span>Início</span></button>
-        <button class="nav-button jarvis-nav" data-view="jarvis"><span class="nav-icon jarvis-nav-avatar"><img src="./assets/jarvis-avatar.png" alt=""></span><span>Jarvis</span><span class="nav-badge jarvis-beta">AI</span></button>
+        <button class="nav-button jarvis-nav" data-view="jarvis"><span class="nav-icon jarvis-nav-avatar"><img src="./jarvis-avatar.png" alt=""></span><span>Jarvis</span><span class="nav-badge jarvis-beta">AI</span></button>
         <button class="nav-button" data-view="agenda"><span class="nav-icon">□</span><span>Agenda</span></button>
         <button class="nav-button" data-view="tasks"><span class="nav-icon">✓</span><span>Tarefas</span></button>
         <button class="nav-button" data-view="notes"><span class="nav-icon">✎</span><span>Notas & Ideias</span></button>
@@ -129,7 +129,7 @@
       <div id="mainArea"></div>
     </main>
 
-    <button id="jarvisDockBtn" class="jarvis-dock" type="button" aria-label="Falar com Jarvis"><span class="jarvis-dock-avatar"><img src="./assets/jarvis-avatar.png" alt=""></span><b>Jarvis</b></button>
+    <button id="jarvisDockBtn" class="jarvis-dock" type="button" aria-label="Falar com Jarvis"><span class="jarvis-dock-avatar"><img src="./jarvis-avatar.png" alt=""></span><b>Jarvis</b></button>
   </div>
 
   <div id="modalHost"></div>
@@ -143,6 +143,6 @@
       }
     }, 10000);
   </script>
-  <script type="module" src="./app.js?v=3.1.1"></script>
+  <script type="module" src="./app.js?v=3.2.0"></script>
 </body>
 </html>

@@ -59,7 +59,7 @@ const state = {
   investmentSnapshots: [],
   transactionDrilldown: null,
   investmentMovementFilter: 'all',
-  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], loading: false, loaded: false, engine: null, error: null }
+  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], counts: { annotations: 0, notes: 0, tasks: 0, projects: 0, actions: 0 }, loading: false, loaded: false, engine: null, error: null }
 }
 
 function esc(v = '') {
@@ -83,6 +83,101 @@ function parseMoneyInput(v) {
   const clean = String(v || '').trim().replace(/\s/g, '').replace(/R\$/gi, '').replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '')
   const n = Number(clean)
   return Number.isFinite(n) ? n : NaN
+}
+
+function personalDisplayName() {
+  const profileName = String(state.profile?.display_name || '').trim()
+  if (profileName) return profileName.split(/\s+/)[0]
+  const meta = state.session?.user?.user_metadata || {}
+  const metaName = String(meta.first_name || meta.given_name || meta.full_name || meta.name || '').trim()
+  if (metaName) return metaName.split(/\s+/)[0]
+  const email = String(state.session?.user?.email || '').toLowerCase()
+  if (email === 'tgcs.business@gmail.com') return 'Thiago'
+  const local = email.split('@')[0] || 'Você'
+  return local.replace(/[._-]+/g, ' ').trim().split(/\s+/)[0] || 'Você'
+}
+
+const JARVIS_TEST_CLEANUP_KEY = 'jarvis_v32_test_cleanup_20260905'
+const JARVIS_TEST_WINDOW_START = '2026-09-05T00:00:00Z'
+const JARVIS_TEST_WINDOW_END = '2026-09-06T00:00:00Z'
+
+function isJarvisTestAction(a) {
+  return a?.action_type === 'calendar_create' && a?.payload?.title === 'Reunião com Carlos' && String(a?.payload?.starts_at || '').startsWith('2026-09-11T14:00:00')
+}
+function isJarvisTestTask(t) { return String(t?.title || '').trim() === 'Mandar o contrato para o contador' }
+function isJarvisTestNote(n) { return /^Erros de empresários ao misturar contas pessoais e da empresa/i.test(String(n?.title || '')) }
+function isJarvisTestAnnotation(a) {
+  const hay = `${a?.merchant || ''} ${a?.description || ''} ${a?.note || ''} ${a?.notes || ''}`.toLowerCase()
+  return Math.abs(num(a?.amount)) === 42.5 && hay.includes('edna')
+}
+function isJarvisTestMessage(m) {
+  const b = String(m?.body || m?.transcript || '')
+  return [
+    'Jarvis, gastei R$ 42,50 na Edna no débito do Inter. Comprei pão, leite e refrigerante.',
+    'Registrei o gasto de R$ 42,50 na Edna, pago no débito do Inter, referente a pão, leite e refrigerante.',
+    'Entendi como financeiro: R$ 42,50. A interpretacao completa sera refinada pela IA.',
+    'Jarvis, anota uma ideia de vídeo sobre os erros que empresários cometem misturando conta pessoal e da empresa.',
+    'Anotei a ideia de vídeo sobre os erros que empresários cometem ao misturar a conta pessoal com a da empresa.',
+    'Jarvis, me lembra amanhã às 9h de mandar o contrato para o contador.',
+    'Vou te lembrar amanhã, 6 de setembro, às 9h, de mandar o contrato para o contador.',
+    'Jarvis, agenda uma reunião com Carlos sexta-feira às 14h por uma hora.',
+    'Posso agendar a reunião com Carlos para sexta-feira, 11 de setembro, das 14h às 15h?'
+  ].includes(b)
+}
+
+function jarvisActionFingerprint(a) {
+  if (!a) return ''
+  if (a.action_type === 'calendar_create') return ['calendar_create', a.payload?.title || '', a.payload?.starts_at || '', a.payload?.ends_at || ''].join('|').toLowerCase()
+  return [a.action_type || '', a.payload?.title || '', a.created_at || a.id || ''].join('|').toLowerCase()
+}
+function dedupeJarvisActions(actions = []) {
+  const rank = { executed: 5, confirmed: 4, proposed: 3, failed: 2, cancelled: 1 }
+  const map = new Map()
+  for (const a of actions) {
+    const key = jarvisActionFingerprint(a) || a.id
+    const current = map.get(key)
+    if (!current) { map.set(key, a); continue }
+    const ar = rank[String(a.status || '').toLowerCase()] || 0
+    const cr = rank[String(current.status || '').toLowerCase()] || 0
+    if (ar > cr || (ar === cr && new Date(a.updated_at || a.created_at || 0) > new Date(current.updated_at || current.created_at || 0))) map.set(key, a)
+  }
+  return [...map.values()]
+}
+function dedupeJarvisAnnotations(items = []) {
+  const seen = new Set(), out = []
+  for (const x of items) {
+    const key = [num(x?.amount).toFixed(2), x?.merchant || x?.counterparty || '', x?.occurred_at || x?.transaction_date || x?.date || '', x?.description || x?.note || x?.notes || ''].join('|').toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key); out.push(x)
+  }
+  return out
+}
+
+async function cleanupKnownJarvisTestData() {
+  if (!state.session?.user?.id || localStorage.getItem(JARVIS_TEST_CLEANUP_KEY) === 'done') return
+  const uid = state.session.user.id
+  const attempts = []
+  const run = async (label, promise) => {
+    try { const { error } = await promise; if (error) throw error; attempts.push([label, true]) }
+    catch (err) { console.warn(`Jarvis test cleanup: ${label}`, err); attempts.push([label, false]) }
+  }
+  await run('actions', supabase.from('jarvis_actions').delete().eq('user_id', uid).eq('action_type', 'calendar_create').gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END).contains('payload', { title: 'Reunião com Carlos' }))
+  await run('tasks', supabase.from('jarvis_tasks').delete().eq('user_id', uid).eq('title', 'Mandar o contrato para o contador').gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END))
+  await run('notes', supabase.from('jarvis_notes').delete().eq('user_id', uid).ilike('title', 'Erros de empresários ao misturar contas pessoais e da empresa%').gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END))
+  await run('annotations', supabase.from('financial_annotations').delete().eq('user_id', uid).eq('amount', 42.5).ilike('merchant', '%Edna%').gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END))
+  const bodies = [
+    'Jarvis, gastei R$ 42,50 na Edna no débito do Inter. Comprei pão, leite e refrigerante.',
+    'Registrei o gasto de R$ 42,50 na Edna, pago no débito do Inter, referente a pão, leite e refrigerante.',
+    'Entendi como financeiro: R$ 42,50. A interpretacao completa sera refinada pela IA.',
+    'Jarvis, anota uma ideia de vídeo sobre os erros que empresários cometem misturando conta pessoal e da empresa.',
+    'Anotei a ideia de vídeo sobre os erros que empresários cometem ao misturar a conta pessoal com a da empresa.',
+    'Jarvis, me lembra amanhã às 9h de mandar o contrato para o contador.',
+    'Vou te lembrar amanhã, 6 de setembro, às 9h, de mandar o contrato para o contador.',
+    'Jarvis, agenda uma reunião com Carlos sexta-feira às 14h por uma hora.',
+    'Posso agendar a reunião com Carlos para sexta-feira, 11 de setembro, das 14h às 15h?'
+  ]
+  await run('messages', supabase.from('jarvis_messages').delete().eq('user_id', uid).in('body', bodies).gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END))
+  if (attempts.some(([,ok]) => ok)) localStorage.setItem(JARVIS_TEST_CLEANUP_KEY, 'done')
 }
 function monthRange() {
   const [y, m] = state.month.split('-').map(Number)
@@ -195,8 +290,9 @@ function renderSession() {
   if (signed) {
     const email = state.session.user.email || 'usuario'
     $('userEmail').textContent = email
-    $('userName').textContent = state.profile?.display_name || email.split('@')[0]
-    $('userAvatar').textContent = (state.profile?.display_name || email)[0].toUpperCase()
+    const friendlyName = personalDisplayName()
+    $('userName').textContent = friendlyName
+    $('userAvatar').textContent = friendlyName[0]?.toUpperCase() || 'T'
     loadData()
   }
 }
@@ -343,7 +439,7 @@ async function loadData() {
 
 function updateUserChrome() {
   const email = state.session?.user?.email || 'usuario'
-  const name = state.profile?.display_name || email.split('@')[0]
+  const name = personalDisplayName()
   $('userName').textContent = name
   $('userAvatar').textContent = name[0]?.toUpperCase() || 'U'
   const review = state.transactions.filter((t) => t.review_status === 'needs_review').length
@@ -2175,25 +2271,27 @@ async function loadJarvisData(force = false) {
   if (['jarvis','home','agenda','tasks','notes','projects'].includes(state.view)) renderMain()
   try {
     const [messages, annotations, notes, tasks, projects, actions, connections] = await Promise.all([
-      supabase.from('jarvis_messages').select('*').order('created_at', { ascending: false }).limit(40),
-      supabase.from('financial_annotations').select('*').order('created_at', { ascending: false }).limit(12),
-      supabase.from('jarvis_notes').select('*').order('created_at', { ascending: false }).limit(12),
-      supabase.from('jarvis_tasks').select('*').order('created_at', { ascending: false }).limit(12),
-      supabase.from('jarvis_projects').select('*').order('created_at', { ascending: false }).limit(12),
-      supabase.from('jarvis_actions').select('*').order('created_at', { ascending: false }).limit(12),
+      supabase.from('jarvis_messages').select('*').order('created_at', { ascending: false }).limit(80),
+      supabase.from('financial_annotations').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
+      supabase.from('jarvis_notes').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
+      supabase.from('jarvis_tasks').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
+      supabase.from('jarvis_projects').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
+      supabase.from('jarvis_actions').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
       supabase.from('jarvis_connections').select('*').order('updated_at', { ascending: false }).limit(12)
     ])
     const err = messages.error || annotations.error || notes.error || tasks.error || projects.error || actions.error || connections.error
     if (err) throw err
-    state.jarvis.messages = (messages.data || []).reverse()
-    state.jarvis.annotations = annotations.data || []
-    state.jarvis.notes = notes.data || []
-    state.jarvis.tasks = tasks.data || []
+    state.jarvis.messages = (messages.data || []).filter((x) => !isJarvisTestMessage(x)).reverse()
+    state.jarvis.annotations = dedupeJarvisAnnotations((annotations.data || []).filter((x) => !isJarvisTestAnnotation(x)))
+    state.jarvis.notes = (notes.data || []).filter((x) => !isJarvisTestNote(x))
+    state.jarvis.tasks = (tasks.data || []).filter((x) => !isJarvisTestTask(x))
     state.jarvis.projects = projects.data || []
-    state.jarvis.actions = actions.data || []
+    state.jarvis.actions = dedupeJarvisActions((actions.data || []).filter((x) => !isJarvisTestAction(x)))
+    state.jarvis.counts = { annotations: annotations.count ?? state.jarvis.annotations.length, notes: notes.count ?? state.jarvis.notes.length, tasks: tasks.count ?? state.jarvis.tasks.length, projects: projects.count ?? state.jarvis.projects.length, actions: actions.count ?? state.jarvis.actions.length }
     state.jarvis.connections = connections.data || []
     state.jarvis.error = null
     state.jarvis.loaded = true
+    cleanupKnownJarvisTestData().catch((err) => console.warn('Jarvis test cleanup', err))
   } catch (err) {
     state.jarvis.error = humanError(err)
     state.jarvis.loaded = true
@@ -2213,10 +2311,10 @@ function jarvisCreatedSummary() {
   const tasks = state.jarvis.tasks.filter((x) => x.status === 'pending').length
   const actions = state.jarvis.actions.filter((x) => x.status === 'proposed').length
   return [
-    ['Contextos financeiros', pending, 'Aguardando conciliacao com extratos'],
-    ['Notas e ideias', state.jarvis.notes.length, 'Memoria estruturada do Jarvis'],
+    ['Contextos financeiros', pending, 'Aguardando conciliação com extratos'],
+    ['Notas e ideias', state.jarvis.notes.length, 'Memória estruturada do Jarvis'],
     ['Lembretes', tasks, 'Pendentes'],
-    ['Acoes para confirmar', actions, 'Agenda e acoes externas']
+    ['Ações para confirmar', actions, 'Agenda e ações externas']
   ]
 }
 
@@ -2347,7 +2445,7 @@ function jarvisPresenceMarkup(visualState = 'idle', variant = 'default') {
   const safeState = JARVIS_VISUAL_LABELS[visualState] ? visualState : 'idle'
   return `<div class="jarvis-presence ${variant === 'hero' ? 'hero-presence' : ''} jarvis-state-${safeState}" data-jarvis-presence data-jarvis-visual-state="${safeState}">
     <div class="jarvis-presence-orbit orbit-a"></div><div class="jarvis-presence-orbit orbit-b"></div><div class="jarvis-presence-scan"></div>
-    <div class="jarvis-presence-avatar"><img src="./assets/jarvis-avatar.png" alt="Jarvis, assistente pessoal"></div>
+    <div class="jarvis-presence-avatar"><img src="./jarvis-avatar.png" alt="Jarvis, assistente pessoal"></div>
     <div class="jarvis-audio-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
     <div class="jarvis-presence-status"><span></span><b data-jarvis-state-label>${esc(JARVIS_VISUAL_LABELS[safeState])}</b></div>
   </div>`
@@ -2395,16 +2493,20 @@ async function sendJarvisQuick(message, button = null) {
 
 function renderHome() {
   if (!state.jarvis.loaded && !state.jarvis.loading) loadJarvisData()
-  const name = state.profile?.display_name || state.session?.user?.email?.split('@')[0] || 'você'
+  const name = personalDisplayName()
   const now = new Date()
   const greeting = now.getHours() < 12 ? 'Bom dia' : now.getHours() < 18 ? 'Boa tarde' : 'Boa noite'
   const pendingTasks = state.jarvis.tasks.filter((x) => x.status === 'pending').sort((a,b) => new Date(jarvisTaskTime(a) || '2999-01-01') - new Date(jarvisTaskTime(b) || '2999-01-01'))
   const todayTasks = pendingTasks.filter((x) => isSameLocalDay(jarvisTaskTime(x)))
+  const overdueTasks = pendingTasks.filter((x) => jarvisTaskTime(x) && new Date(jarvisTaskTime(x)) < now && !isSameLocalDay(jarvisTaskTime(x)))
   const proposedActions = state.jarvis.actions.filter((x) => x.status === 'proposed')
-  const calendarActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && x.payload?.starts_at).sort((a,b) => new Date(a.payload.starts_at) - new Date(b.payload.starts_at))
-  const upcomingEvents = calendarActions.filter((x) => new Date(x.payload.starts_at) >= new Date(now.getTime() - 60*60*1000)).slice(0,4)
+  const scheduledCalendarActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && x.status === 'executed' && x.payload?.starts_at).sort((a,b) => new Date(a.payload.starts_at) - new Date(b.payload.starts_at))
+  const todayEvents = scheduledCalendarActions.filter((x) => isSameLocalDay(x.payload.starts_at, now))
+  const upcomingEvents = scheduledCalendarActions.filter((x) => new Date(x.payload.starts_at) >= new Date(now.getTime() - 60*60*1000)).slice(0,4)
+  const nextEvent = upcomingEvents[0] || null
   const latestNotes = state.jarvis.notes.slice(0,3)
-  const activeProjects = state.jarvis.projects.filter((x) => !['completed','archived','cancelled'].includes(String(x.status || '').toLowerCase())).slice(0,3)
+  const allActiveProjects = state.jarvis.projects.filter((x) => !['completed','archived','cancelled'].includes(String(x.status || '').toLowerCase()))
+  const activeProjects = allActiveProjects.slice(0,3)
   const tx = visibleTransactions()
   const totals = calcTotals(tx)
   const reviewCount = state.transactions.filter((t) => t.review_status === 'needs_review').length
@@ -2413,14 +2515,21 @@ function renderHome() {
   const pendingAnnotations = state.jarvis.annotations.filter((x) => x.reconciliation_status === 'pending').length
   const attention = []
   if (proposedActions.length) attention.push(`${proposedActions.length} ação${proposedActions.length > 1 ? 'ões' : ''} aguardando confirmação`)
+  if (overdueTasks.length) attention.push(`${overdueTasks.length} tarefa${overdueTasks.length > 1 ? 's' : ''} atrasada${overdueTasks.length > 1 ? 's' : ''}`)
   if (todayTasks.length) attention.push(`${todayTasks.length} lembrete${todayTasks.length > 1 ? 's' : ''} para hoje`)
   if (reviewCount) attention.push(`${reviewCount} transaç${reviewCount > 1 ? 'ões' : 'ão'} financeira${reviewCount > 1 ? 's' : ''} para revisar`)
   if (pendingAnnotations) attention.push(`${pendingAnnotations} contexto${pendingAnnotations > 1 ? 's' : ''} do Jarvis para conciliar`)
   if (!attention.length) attention.push('Nenhuma pendência crítica detectada agora')
+  const focusParts = []
+  if (todayEvents.length) focusParts.push(`${todayEvents.length} compromisso${todayEvents.length > 1 ? 's' : ''} hoje`)
+  if (todayTasks.length) focusParts.push(`${todayTasks.length} lembrete${todayTasks.length > 1 ? 's' : ''}`)
+  if (proposedActions.length) focusParts.push(`${proposedActions.length} confirmação${proposedActions.length > 1 ? 'ões' : ''} pendente${proposedActions.length > 1 ? 's' : ''}`)
+  if (reviewCount) focusParts.push(`${reviewCount} lançamento${reviewCount > 1 ? 's' : ''} para revisar`)
+  const focusSummary = focusParts.length ? `Hoje merece atenção em ${focusParts.join(', ')}.` : 'Seu ambiente está em ordem. Nenhuma pendência importante detectada agora.'
 
   $('mainArea').innerHTML = `<div class="content-stack personal-home">
     <section class="personal-hero personal-hero-with-jarvis">
-      <div class="personal-hero-copy"><span class="eyebrow">${esc(new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).format(now).toUpperCase())}</span><h2>${esc(greeting)}, ${esc(name)}.</h2><p>Este é o resumo do que merece sua atenção. O financeiro agora é uma parte do seu ambiente, não o ambiente inteiro.</p><button class="button primary personal-hero-cta" data-personal-nav="jarvis" type="button">Falar com Jarvis</button></div>
+      <div class="personal-hero-copy"><span class="eyebrow">${esc(new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).format(now).toUpperCase())}</span><h2>${esc(greeting)}, ${esc(name)}.</h2><p>${esc(focusSummary)}</p><div class="hero-actions"><button class="button primary personal-hero-cta" data-personal-nav="jarvis" type="button">Falar com Jarvis</button><button id="homeRefresh" class="button personal-hero-refresh" type="button">Atualizar</button></div></div>
       <div class="personal-hero-ai">${jarvisPresenceMarkup(proposedActions.length ? 'attention' : 'idle', 'hero')}<small>${proposedActions.length ? `${proposedActions.length} ação${proposedActions.length > 1 ? 'ões' : ''} esperando você` : 'Pronto para ajudar'}</small></div>
     </section>
 
@@ -2430,7 +2539,7 @@ function renderHome() {
       <article class="home-focus-card today-card">
         <div class="home-card-head"><div><span class="eyebrow">HOJE</span><h3>Seu dia</h3></div><button data-personal-nav="agenda" type="button">Ver agenda →</button></div>
         <div class="home-today-list">
-          ${upcomingEvents.length ? upcomingEvents.slice(0,2).map((a) => `<div><span class="home-time">${esc(new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(a.payload.starts_at)))}</span><div><strong>${esc(a.payload.title || 'Compromisso')}</strong><small>${a.status === 'proposed' ? 'Aguardando confirmação' : 'No calendário'}</small></div></div>`).join('') : '<div class="home-empty-line">Nenhum compromisso criado pelo Jarvis para as próximas horas.</div>'}
+          ${todayEvents.length ? todayEvents.slice(0,2).map((a) => `<div><span class="home-time">${esc(new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(a.payload.starts_at)))}</span><div><strong>${esc(a.payload.title || 'Compromisso')}</strong><small>No Google Calendar</small></div></div>`).join('') : (nextEvent ? `<div><span class="home-time">${esc(new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'2-digit'}).format(new Date(nextEvent.payload.starts_at)))}</span><div><strong>${esc(nextEvent.payload.title || 'Próximo compromisso')}</strong><small>Próximo evento conhecido pelo Jarvis</small></div></div>` : '<div class="home-empty-line">Nenhum compromisso futuro criado pelo Jarvis.</div>')}
           ${todayTasks.length ? todayTasks.slice(0,2).map((t) => `<div><span class="home-time">${jarvisTaskTime(t) ? esc(new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(jarvisTaskTime(t)))) : '•'}</span><div><strong>${esc(t.title)}</strong><small>Lembrete</small></div></div>`).join('') : ''}
         </div>
       </article>
@@ -2448,7 +2557,7 @@ function renderHome() {
         <div class="mini-stats"><span><b>${money.format(cashBalance)}</b><small>Saldos rastreados</small></span><span><b>${reviewCount}</b><small>Para revisar</small></span></div>
       </article>
       <article class="home-module-card">
-        <div class="home-card-head"><div><span class="eyebrow">PROJETOS</span><h3>${activeProjects.length}</h3></div><button data-personal-nav="projects" type="button">Abrir →</button></div>
+        <div class="home-card-head"><div><span class="eyebrow">PROJETOS</span><h3>${allActiveProjects.length}</h3></div><button data-personal-nav="projects" type="button">Abrir →</button></div>
         <p>${activeProjects.length ? activeProjects.map(jarvisProjectName).slice(0,2).map(esc).join(' · ') : 'Seus próximos planos podem nascer em uma conversa com o Jarvis.'}</p>
       </article>
       <article class="home-module-card">
@@ -2469,6 +2578,7 @@ function renderHome() {
     </section>
   </div>`
   bindPersonalNav()
+  $('homeRefresh')?.addEventListener('click', async () => { const btn = $('homeRefresh'); setBusy(btn, true, 'Atualizando'); try { await Promise.all([loadData(), loadJarvisData(true)]); toast('Home atualizada.', 'success') } finally { setBusy(btn, false) } })
 }
 
 function renderAgenda() {

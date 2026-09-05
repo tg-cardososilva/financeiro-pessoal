@@ -1,17 +1,22 @@
-# Jarvis v3.1.1
+# Jarvis v3.2.0 — Home viva
 
-Atualização visual do ambiente pessoal com a identidade oficial do Jarvis.
+Arquivos para subir **diretamente na raiz** do repositório GitHub Pages:
 
-## Novidades
-- Avatar oficial do Jarvis incorporado ao painel.
-- Presença animada na Home e na tela de conversa.
-- Estados visuais: online, ouvindo, pensando, respondendo e aguardando confirmação.
-- Halo/HUD animado em CSS, sem GIF ou vídeo pesado.
-- Avatar do Jarvis na sidebar, splash e dock flutuante.
-- Respeita `prefers-reduced-motion` para acessibilidade.
+- `index.html`
+- `app.js`
+- `styles.css`
+- `jarvis-avatar.png`
 
-## Publicação
-Substitua `index.html`, `app.js` e `styles.css` e envie também a pasta `assets/` para a raiz do repositório.
+Não crie pasta `assets`.
 
+## Principais correções
 
-Correção v3.1.1: o avatar do Jarvis agora está embutido no CSS. A pasta assets continua incluída, mas a interface não depende mais dela para exibir a imagem. Isso evita imagem quebrada no GitHub Pages mesmo se a pasta não for publicada corretamente.
+- Saudação usa **Thiago** no perfil atual, sem exibir o e-mail.
+- Home 360º usa dados reais já disponíveis de tarefas, ações, notas, projetos, finanças e integrações.
+- Compromissos pendentes não aparecem como se já estivessem no calendário.
+- Ações de calendário semanticamente duplicadas são consolidadas no painel.
+- Contagem de projetos ativos não fica limitada aos três cards de prévia.
+- Dados conhecidos dos testes de 05/09/2026 são ocultados imediatamente e a versão tenta removê-los do Supabase uma vez, usando a sessão autenticada e filtros exatos.
+- Avatar do Jarvis é carregado da raiz (`./jarvis-avatar.png`) para combinar com o fluxo manual de upload no GitHub.
+
+Após publicar, faça `Command + Shift + R`.
