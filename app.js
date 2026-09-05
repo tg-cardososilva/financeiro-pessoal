@@ -59,7 +59,8 @@ const state = {
   investmentSnapshots: [],
   transactionDrilldown: null,
   investmentMovementFilter: 'all',
-  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], counts: { annotations: 0, notes: 0, tasks: 0, projects: 0, actions: 0 }, loading: false, loaded: false, engine: null, error: null }
+  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], counts: { annotations: 0, notes: 0, tasks: 0, projects: 0, actions: 0 }, loading: false, loaded: false, engine: null, error: null },
+  calendar: { events: [], loading: false, loaded: false, error: null, connected: null, syncedAt: null, displayName: null }
 }
 
 function esc(v = '') {
@@ -2349,7 +2350,7 @@ async function executeJarvisCalendarAction(actionId) {
     if (error) throw error
     if (data?.error) throw new Error(data.error)
     toast('Evento criado no Google Calendar.', 'success')
-    await loadJarvisData(true)
+    await Promise.all([loadJarvisData(true), loadCalendarData(true)])
   } catch (err) {
     toast(humanError(err), 'error')
     setBusy(btn, false)
@@ -2464,13 +2465,34 @@ function setJarvisVisualState(next = 'idle', holdMs = 0) {
   }
 }
 
+const JARVIS_TIMEZONE = 'America/Sao_Paulo'
+
+function normalizeJarvisText(value = '') {
+  return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
+function shouldUseCalendarRead(message = '') {
+  const text = normalizeJarvisText(message)
+  const writeIntent = /\b(agende|agendar|marque|marcar|crie|criar|adicione|adicionar|cancele|cancelar|remarque|remarcar|mude|mudar|altere|alterar|apague|apagar|remova|remover)\b/.test(text)
+    || /^(jarvis[,:]?\s+)?agenda\s+(uma|um|a|o|reuniao|evento|consulta|compromisso)\b/.test(text)
+  if (writeIntent) return false
+  return /\b(calendario|compromisso|compromissos|reuniao|reunioes|evento|eventos|agenda)\b/.test(text)
+    || /\bo que (eu )?tenho (hoje|amanha)\b/.test(text)
+    || /\btenho (algo|algum compromisso|alguma reuniao) (hoje|amanha)\b/.test(text)
+}
+
+async function invokeJarvisEngine(message, source = 'panel_jarvis') {
+  const functionName = shouldUseCalendarRead(message) ? 'jarvis-calendar-query' : 'jarvis-core'
+  return supabase.functions.invoke(functionName, { body: { message, channel: 'web', source } })
+}
+
 async function sendJarvisQuick(message, button = null) {
   const text = String(message || '').trim()
   if (!text) return false
   setBusy(button, true, 'Enviando')
   setJarvisVisualState('thinking')
   try {
-    const { data, error } = await supabase.functions.invoke('jarvis-core', { body: { message: text, channel: 'web', source: `panel_${state.view}` } })
+    const { data, error } = await invokeJarvisEngine(text, `panel_${state.view}`)
     if (error) throw error
     if (data?.error) throw new Error(data.error)
     state.jarvis.engine = data?.engine || state.jarvis.engine
@@ -2486,19 +2508,143 @@ async function sendJarvisQuick(message, button = null) {
   }
 }
 
+function zonedDateKey(value = new Date()) {
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: JARVIS_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d)
+  const get = (type) => parts.find((p) => p.type === type)?.value || ''
+  return `${get('year')}-${get('month')}-${get('day')}`
+}
+
+function addDateKeyDays(key, days) {
+  const [y,m,d] = String(key).split('-').map(Number)
+  if (!y || !m || !d) return ''
+  return new Date(Date.UTC(y, m - 1, d + days, 12)).toISOString().slice(0,10)
+}
+
+function calendarEventDateKey(event) {
+  if (event?.all_day && /^\d{4}-\d{2}-\d{2}$/.test(String(event?.start || ''))) return String(event.start)
+  return zonedDateKey(event?.start)
+}
+
+function calendarEventStartDate(event) {
+  if (!event?.start) return null
+  if (event.all_day && /^\d{4}-\d{2}-\d{2}$/.test(String(event.start))) {
+    const [y,m,d] = event.start.split('-').map(Number)
+    return new Date(Date.UTC(y, m - 1, d, 12))
+  }
+  const date = new Date(event.start)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function calendarEventTimeLabel(event) {
+  if (event?.all_day) return 'Dia inteiro'
+  const date = calendarEventStartDate(event)
+  if (!date) return '--:--'
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, hour: '2-digit', minute: '2-digit' }).format(date)
+}
+
+function calendarEventDateLabel(event) {
+  const date = calendarEventStartDate(event)
+  if (!date) return '--'
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, day: '2-digit', month: 'short' }).format(date)
+}
+
+function calendarEventDayLabel(event) {
+  const date = calendarEventStartDate(event)
+  if (!date) return '--'
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, day: '2-digit' }).format(date)
+}
+
+function calendarEventMonthLabel(event) {
+  const date = calendarEventStartDate(event)
+  if (!date) return ''
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, month: 'short' }).format(date)
+}
+
+function dedupeCalendarEvents(items = []) {
+  const seen = new Set(), out = []
+  for (const event of items) {
+    const key = `${event?.id || ''}|${event?.start || ''}`
+    if (!event?.id || seen.has(key)) continue
+    seen.add(key)
+    out.push(event)
+  }
+  return out.sort((a,b) => (calendarEventStartDate(a)?.getTime() || 0) - (calendarEventStartDate(b)?.getTime() || 0))
+}
+
+function groupCalendarEvents(items = []) {
+  const today = zonedDateKey()
+  const tomorrow = addDateKeyDays(today, 1)
+  const afterTomorrow = addDateKeyDays(today, 2)
+  return {
+    today: items.filter((event) => calendarEventDateKey(event) === today),
+    tomorrow: items.filter((event) => calendarEventDateKey(event) === tomorrow),
+    upcoming: items.filter((event) => calendarEventDateKey(event) >= afterTomorrow).slice(0,8)
+  }
+}
+
+async function loadCalendarData(force = false) {
+  if (!state.session || state.calendar.loading || (state.calendar.loaded && !force)) return
+  if (!state.jarvis.loaded) {
+    if (!state.jarvis.loading) loadJarvisData()
+    return
+  }
+  const google = jarvisGoogleConnection()
+  if (!google) {
+    state.calendar = { events: [], loading: false, loaded: true, error: null, connected: false, syncedAt: null, displayName: null }
+    if (['home','agenda'].includes(state.view)) renderMain()
+    return
+  }
+  state.calendar.loading = true
+  state.calendar.error = null
+  state.calendar.connected = true
+  if (['home','agenda'].includes(state.view)) renderMain()
+  try {
+    const { data, error } = await supabase.functions.invoke('jarvis-calendar-read', { body: { days: 14 } })
+    if (error) {
+      let details = null
+      try { details = await error.context?.json?.() } catch (_) {}
+      throw new Error(details?.error || error.message || 'Falha ao ler o Google Calendar.')
+    }
+    if (data?.error) throw new Error(data.error)
+    state.calendar.events = dedupeCalendarEvents(data?.events || [])
+    state.calendar.connected = data?.connected !== false
+    state.calendar.syncedAt = data?.synced_at || new Date().toISOString()
+    state.calendar.displayName = data?.display_name || google.display_name || null
+    state.calendar.loaded = true
+  } catch (err) {
+    state.calendar.events = []
+    state.calendar.error = humanError(err)
+    state.calendar.connected = true
+    state.calendar.loaded = true
+  } finally {
+    state.calendar.loading = false
+    if (['home','agenda'].includes(state.view)) renderMain()
+  }
+}
+
+function calendarSourceLabel(event) {
+  return event?.location ? `Google Calendar · ${event.location}` : 'Google Calendar'
+}
+
+function homeAgendaGroup(title, events, emptyText) {
+  return `<div class="home-agenda-group"><div class="home-agenda-group-head"><strong>${esc(title)}</strong><span>${events.length}</span></div><div class="home-agenda-items">${events.length ? events.slice(0,3).map((event) => `<article class="home-agenda-item"><span class="home-time">${esc(calendarEventTimeLabel(event))}</span><div><strong>${esc(event.title || 'Compromisso')}</strong><small>${esc(calendarSourceLabel(event))}</small></div></article>`).join('') : `<div class="home-agenda-empty">${esc(emptyText)}</div>`}</div></div>`
+}
+
 function renderHome() {
   if (!state.jarvis.loaded && !state.jarvis.loading) loadJarvisData()
+  if (state.jarvis.loaded && !state.calendar.loaded && !state.calendar.loading) loadCalendarData()
   const name = personalDisplayName()
   const now = new Date()
-  const greeting = now.getHours() < 12 ? 'Bom dia' : now.getHours() < 18 ? 'Boa tarde' : 'Boa noite'
+  const localHour = Number(new Intl.DateTimeFormat('en-US',{timeZone:JARVIS_TIMEZONE,hour:'2-digit',hourCycle:'h23'}).format(now))
+  const greeting = localHour < 12 ? 'Bom dia' : localHour < 18 ? 'Boa tarde' : 'Boa noite'
   const pendingTasks = state.jarvis.tasks.filter((x) => x.status === 'pending').sort((a,b) => new Date(jarvisTaskTime(a) || '2999-01-01') - new Date(jarvisTaskTime(b) || '2999-01-01'))
   const todayTasks = pendingTasks.filter((x) => isSameLocalDay(jarvisTaskTime(x)))
   const overdueTasks = pendingTasks.filter((x) => jarvisTaskTime(x) && new Date(jarvisTaskTime(x)) < now && !isSameLocalDay(jarvisTaskTime(x)))
-  const proposedActions = state.jarvis.actions.filter((x) => x.status === 'proposed')
-  const scheduledCalendarActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && x.status === 'executed' && x.payload?.starts_at).sort((a,b) => new Date(a.payload.starts_at) - new Date(b.payload.starts_at))
-  const todayEvents = scheduledCalendarActions.filter((x) => isSameLocalDay(x.payload.starts_at, now))
-  const upcomingEvents = scheduledCalendarActions.filter((x) => new Date(x.payload.starts_at) >= new Date(now.getTime() - 60*60*1000)).slice(0,4)
-  const nextEvent = upcomingEvents[0] || null
+  const proposedActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && x.status === 'proposed')
+  const calendarGroups = groupCalendarEvents(state.calendar.events)
+  const todayEvents = calendarGroups.today
   const latestNotes = state.jarvis.notes.slice(0,3)
   const allActiveProjects = state.jarvis.projects.filter((x) => !['completed','archived','cancelled'].includes(String(x.status || '').toLowerCase()))
   const activeProjects = allActiveProjects.slice(0,3)
@@ -2514,6 +2660,7 @@ function renderHome() {
   if (todayTasks.length) attention.push(`${todayTasks.length} lembrete${todayTasks.length > 1 ? 's' : ''} para hoje`)
   if (reviewCount) attention.push(`${reviewCount} transaç${reviewCount > 1 ? 'ões' : 'ão'} financeira${reviewCount > 1 ? 's' : ''} para revisar`)
   if (pendingAnnotations) attention.push(`${pendingAnnotations} contexto${pendingAnnotations > 1 ? 's' : ''} do Jarvis para conciliar`)
+  if (state.calendar.error) attention.push('Google Calendar precisa de atenção')
   if (!attention.length) attention.push('Nenhuma pendência crítica detectada agora')
   const focusParts = []
   if (todayEvents.length) focusParts.push(`${todayEvents.length} compromisso${todayEvents.length > 1 ? 's' : ''} hoje`)
@@ -2521,22 +2668,28 @@ function renderHome() {
   if (proposedActions.length) focusParts.push(`${proposedActions.length} confirmação${proposedActions.length > 1 ? 'ões' : ''} pendente${proposedActions.length > 1 ? 's' : ''}`)
   if (reviewCount) focusParts.push(`${reviewCount} lançamento${reviewCount > 1 ? 's' : ''} para revisar`)
   const focusSummary = focusParts.length ? `Hoje merece atenção em ${focusParts.join(', ')}.` : 'Seu ambiente está em ordem. Nenhuma pendência importante detectada agora.'
+  const calendarBody = !google
+    ? '<div class="calendar-state-card"><strong>Google Calendar não conectado.</strong><span>Conecte sua agenda para trazer compromissos reais para a Home.</span></div>'
+    : state.calendar.loading && !state.calendar.loaded
+      ? '<div class="calendar-state-card"><span class="spinner"></span><span>Lendo Google Calendar...</span></div>'
+      : state.calendar.error
+        ? `<div class="calendar-state-card error"><strong>Não consegui ler o Calendar agora.</strong><span>${esc(state.calendar.error)}</span><button id="homeCalendarRetry" class="button small" type="button">Tentar novamente</button></div>`
+        : `<div class="home-agenda-groups">${homeAgendaGroup('Hoje', calendarGroups.today, 'Nenhum compromisso hoje.')}${homeAgendaGroup('Amanhã', calendarGroups.tomorrow, 'Agenda livre amanhã.')}${homeAgendaGroup('Próximos dias', calendarGroups.upcoming, 'Nenhum compromisso nos próximos dias.')}</div>`
+  const proposals = proposedActions.length ? `<div class="home-agenda-proposals"><div class="home-agenda-group-head"><strong>Aguardando confirmação</strong><span>${proposedActions.length}</span></div>${proposedActions.slice(0,2).map((a) => `<article class="home-agenda-item proposed"><span class="home-time">${a.payload?.starts_at ? esc(new Intl.DateTimeFormat('pt-BR',{timeZone:JARVIS_TIMEZONE,hour:'2-digit',minute:'2-digit'}).format(new Date(a.payload.starts_at))) : '•'}</span><div><strong>${esc(a.payload?.title || 'Ação de agenda')}</strong><small>Jarvis · aguardando confirmação</small></div></article>`).join('')}</div>` : ''
 
   $('mainArea').innerHTML = `<div class="content-stack personal-home">
     <section class="personal-hero personal-hero-with-jarvis">
-      <div class="personal-hero-copy"><span class="eyebrow">${esc(new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).format(now).toUpperCase())}</span><h2>${esc(greeting)}, ${esc(name)}.</h2><p>${esc(focusSummary)}</p><div class="hero-actions"><button class="button primary personal-hero-cta" data-personal-nav="jarvis" type="button">Falar com Jarvis</button><button id="homeRefresh" class="button personal-hero-refresh" type="button">Atualizar</button></div></div>
+      <div class="personal-hero-copy"><span class="eyebrow">${esc(new Intl.DateTimeFormat('pt-BR',{timeZone:JARVIS_TIMEZONE,weekday:'long',day:'2-digit',month:'long'}).format(now).toUpperCase())}</span><h2>${esc(greeting)}, ${esc(name)}.</h2><p>${esc(focusSummary)}</p><div class="hero-actions"><button class="button primary personal-hero-cta" data-personal-nav="jarvis" type="button">Falar com Jarvis</button><button id="homeRefresh" class="button personal-hero-refresh" type="button">Atualizar</button></div></div>
       <div class="personal-hero-ai">${jarvisPresenceMarkup(proposedActions.length ? 'attention' : 'idle', 'hero')}<small>${proposedActions.length ? `${proposedActions.length} ação${proposedActions.length > 1 ? 'ões' : ''} esperando você` : 'Pronto para ajudar'}</small></div>
     </section>
 
     ${state.jarvis.loading && !state.jarvis.loaded ? personalLoading() : ''}
 
-    <section class="home-focus-grid">
-      <article class="home-focus-card today-card">
-        <div class="home-card-head"><div><span class="eyebrow">HOJE</span><h3>Seu dia</h3></div><button data-personal-nav="agenda" type="button">Ver agenda →</button></div>
-        <div class="home-today-list">
-          ${todayEvents.length ? todayEvents.slice(0,2).map((a) => `<div><span class="home-time">${esc(new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(a.payload.starts_at)))}</span><div><strong>${esc(a.payload.title || 'Compromisso')}</strong><small>No Google Calendar</small></div></div>`).join('') : (nextEvent ? `<div><span class="home-time">${esc(new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'2-digit'}).format(new Date(nextEvent.payload.starts_at)))}</span><div><strong>${esc(nextEvent.payload.title || 'Próximo compromisso')}</strong><small>Próximo evento conhecido pelo Jarvis</small></div></div>` : '<div class="home-empty-line">Nenhum compromisso futuro criado pelo Jarvis.</div>')}
-          ${todayTasks.length ? todayTasks.slice(0,2).map((t) => `<div><span class="home-time">${jarvisTaskTime(t) ? esc(new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(jarvisTaskTime(t)))) : '•'}</span><div><strong>${esc(t.title)}</strong><small>Lembrete</small></div></div>`).join('') : ''}
-        </div>
+    <section class="home-focus-grid home-focus-grid-agenda">
+      <article class="home-focus-card today-card real-agenda-card">
+        <div class="home-card-head"><div><span class="eyebrow">AGENDA REAL</span><h3>Hoje, amanhã e próximos dias</h3></div><button data-personal-nav="agenda" type="button">Ver agenda →</button></div>
+        ${calendarBody}
+        ${proposals}
       </article>
 
       <article class="home-focus-card attention-card">
@@ -2564,7 +2717,7 @@ function renderHome() {
     <section class="panel home-integrations-panel">
       <div class="panel-head"><div><span class="eyebrow">INTEGRAÇÕES</span><h2>Seu ecossistema</h2><p>O Jarvis conecta serviços sem transformar cada integração em um aplicativo separado.</p></div></div>
       <div class="integration-strip">
-        <div class="integration-tile ${google ? 'connected' : ''}"><span class="integration-logo">31</span><div><strong>Google Calendar</strong><small>${google ? 'Conectado' : 'Não conectado'}</small></div><i>${google ? '✓' : '○'}</i></div>
+        <div class="integration-tile ${google ? 'connected' : ''}"><span class="integration-logo">31</span><div><strong>Google Calendar</strong><small>${google ? (state.calendar.error ? 'Conectado · leitura com erro' : 'Conectado · leitura real') : 'Não conectado'}</small></div><i>${google && !state.calendar.error ? '✓' : google ? '!' : '○'}</i></div>
         <div class="integration-tile configuring"><span class="integration-logo">WA</span><div><strong>WhatsApp</strong><small>Aguardando número de produção</small></div><i>…</i></div>
         <div class="integration-tile future"><span class="integration-logo">D</span><div><strong>Google Drive</strong><small>Próxima integração</small></div><i>＋</i></div>
         <div class="integration-tile future"><span class="integration-logo">⌖</span><div><strong>Maps / Places</strong><small>Planejado</small></div><i>＋</i></div>
@@ -2573,32 +2726,48 @@ function renderHome() {
     </section>
   </div>`
   bindPersonalNav()
-  $('homeRefresh')?.addEventListener('click', async () => { const btn = $('homeRefresh'); setBusy(btn, true, 'Atualizando'); try { await Promise.all([loadData(), loadJarvisData(true)]); toast('Home atualizada.', 'success') } finally { setBusy(btn, false) } })
+  $('homeCalendarRetry')?.addEventListener('click', () => loadCalendarData(true))
+  $('homeRefresh')?.addEventListener('click', async () => {
+    const btn = $('homeRefresh')
+    setBusy(btn, true, 'Atualizando')
+    try {
+      await Promise.all([loadData(), loadJarvisData(true), loadCalendarData(true)])
+      toast(state.calendar.error ? 'Home atualizada. O Calendar segue indisponível.' : 'Home atualizada.', state.calendar.error ? 'error' : 'success')
+    } finally { setBusy(btn, false) }
+  })
 }
 
 function renderAgenda() {
   if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
+  if (state.jarvis.loaded && !state.calendar.loaded && !state.calendar.loading) loadCalendarData()
   const google = jarvisGoogleConnection()
-  const actions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create').sort((a,b) => new Date(a.payload?.starts_at || a.created_at) - new Date(b.payload?.starts_at || b.created_at))
-  const pending = actions.filter((x) => ['proposed','failed'].includes(x.status))
-  const scheduled = actions.filter((x) => x.status === 'executed')
+  const pending = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && ['proposed','failed'].includes(x.status)).sort((a,b) => new Date(a.payload?.starts_at || a.created_at) - new Date(b.payload?.starts_at || b.created_at))
+  const events = state.calendar.events.slice(0,12)
+  const calendarPanel = !google
+    ? '<div class="personal-empty"><strong>Google Calendar não conectado.</strong><span>Conecte sua agenda para ver compromissos reais aqui.</span></div>'
+    : state.calendar.loading && !state.calendar.loaded
+      ? personalLoading()
+      : state.calendar.error
+        ? `<div class="calendar-state-card error"><strong>Leitura do Calendar indisponível.</strong><span>${esc(state.calendar.error)}</span><button id="agendaCalendarRetry" class="button small" type="button">Tentar novamente</button></div>`
+        : events.length
+          ? events.map((event) => `<article><div class="agenda-date"><strong>${esc(calendarEventDayLabel(event))}</strong><span>${esc(calendarEventMonthLabel(event))}</span></div><div><strong>${esc(event.title || 'Compromisso')}</strong><span>${esc(calendarEventTimeLabel(event))}${event.location ? ` · ${esc(event.location)}` : ''}</span><small>Google Calendar</small></div>${event.html_link ? `<a href="${esc(event.html_link)}" target="_blank" rel="noopener">Abrir ↗</a>` : ''}</article>`).join('')
+          : '<div class="personal-empty"><strong>Nenhum compromisso nos próximos 14 dias.</strong><span>A leitura está conectada ao Google Calendar.</span></div>'
   $('mainArea').innerHTML = `<div class="content-stack personal-section">
-    <section class="section-intro"><div><span class="eyebrow">AGENDA</span><h2>Tempo com contexto.</h2><p>Compromissos criados pelo Jarvis, confirmações pendentes e conexão com seu Google Calendar.</p></div><button id="agendaAskJarvis" class="button primary" type="button">✦ Criar compromisso</button></section>
+    <section class="section-intro"><div><span class="eyebrow">AGENDA</span><h2>Tempo com contexto.</h2><p>Compromissos reais do Google Calendar e propostas do Jarvis em camadas separadas.</p></div><button id="agendaAskJarvis" class="button primary" type="button">✦ Criar compromisso</button></section>
     <section class="personal-two-col">
       <div class="panel">
-        <div class="panel-head"><div><h2>Próximos compromissos</h2><p>Eventos conhecidos pelo Jarvis. A leitura completa do calendário será ampliada sem mudar esta interface.</p></div></div>
-        <div class="agenda-list">
-          ${scheduled.length ? scheduled.slice(0,8).map((a) => `<article><div class="agenda-date"><strong>${a.payload?.starts_at ? esc(new Intl.DateTimeFormat('pt-BR',{day:'2-digit'}).format(new Date(a.payload.starts_at))) : '--'}</strong><span>${a.payload?.starts_at ? esc(new Intl.DateTimeFormat('pt-BR',{month:'short'}).format(new Date(a.payload.starts_at))) : ''}</span></div><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span><small>Google Calendar</small></div>${a.payload?.google_event_link ? `<a href="${esc(a.payload.google_event_link)}" target="_blank" rel="noopener">Abrir ↗</a>` : ''}</article>`).join('') : '<div class="personal-empty"><strong>Nenhum evento executado pelo Jarvis.</strong><span>Peça ao assistente para criar um compromisso.</span></div>'}
-        </div>
+        <div class="panel-head"><div><h2>Google Calendar</h2><p>Leitura real, somente leitura, em ${esc(JARVIS_TIMEZONE)}.</p></div>${state.calendar.syncedAt ? `<span class="panel-tag">Sincronizado</span>` : ''}</div>
+        <div class="agenda-list">${calendarPanel}</div>
       </div>
       <aside class="personal-side-stack">
-        <section class="panel integration-card-large ${google ? 'connected' : ''}"><span class="integration-logo big">31</span><div><span class="eyebrow">GOOGLE CALENDAR</span><h3>${google ? 'Conectado' : 'Não conectado'}</h3><p>${google ? esc(google.display_name || 'Agenda principal') : 'Autorize sua agenda para executar compromissos.'}</p></div>${google ? '<span class="connection-ok">✓</span>' : '<button id="agendaGoogleConnect" class="button small" type="button">Conectar</button>'}</section>
-        <section class="panel"><div class="panel-head"><div><h2>Aguardando confirmação</h2><p>Ações externas ficam sob seu controle.</p></div></div><div class="pending-action-list">${pending.length ? pending.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" data-jarvis-calendar-action="${esc(a.id)}" type="button" ${google ? '' : 'disabled'}>Confirmar</button></article>`).join('') : '<div class="personal-empty compact"><span>Nenhuma ação pendente.</span></div>'}</div></section>
+        <section class="panel integration-card-large ${google ? 'connected' : ''}"><span class="integration-logo big">31</span><div><span class="eyebrow">GOOGLE CALENDAR</span><h3>${google ? 'Conectado' : 'Não conectado'}</h3><p>${google ? esc(state.calendar.displayName || google.display_name || 'Agenda principal') : 'Autorize sua agenda para ler e executar compromissos.'}</p></div>${google ? '<span class="connection-ok">✓</span>' : '<button id="agendaGoogleConnect" class="button small" type="button">Conectar</button>'}</section>
+        <section class="panel"><div class="panel-head"><div><h2>Aguardando confirmação</h2><p>Propostas do Jarvis não são eventos reais até você confirmar.</p></div></div><div class="pending-action-list">${pending.length ? pending.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span><small>Jarvis · aguardando confirmação</small>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" data-jarvis-calendar-action="${esc(a.id)}" type="button" ${google ? '' : 'disabled'}>Confirmar</button></article>`).join('') : '<div class="personal-empty compact"><span>Nenhuma ação pendente.</span></div>'}</div></section>
       </aside>
     </section>
   </div>`
   $('agendaAskJarvis')?.addEventListener('click', () => navigate('jarvis'))
   $('agendaGoogleConnect')?.addEventListener('click', connectJarvisGoogleCalendar)
+  $('agendaCalendarRetry')?.addEventListener('click', () => loadCalendarData(true))
   document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
 }
 
@@ -2712,7 +2881,7 @@ async function sendJarvisMessage(e) {
   setJarvisVisualState('thinking')
   showInfo('jarvisMessage', '')
   try {
-    const { data, error } = await supabase.functions.invoke('jarvis-core', { body: { message: text, channel: 'web', source: 'panel_simulator' } })
+    const { data, error } = await invokeJarvisEngine(text, 'panel_jarvis')
     if (error) throw error
     if (data?.error) throw new Error(data.error)
     state.jarvis.engine = data?.engine || null
