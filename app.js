@@ -2474,6 +2474,7 @@ function normalizeJarvisText(value = '') {
 function shouldUseCalendarRead(message = '') {
   const text = normalizeJarvisText(message)
   const writeIntent = /\b(agende|agendar|marque|marcar|crie|criar|adicione|adicionar|cancele|cancelar|remarque|remarcar|mude|mudar|altere|alterar|apague|apagar|remova|remover)\b/.test(text)
+    || /^(jarvis[,:]?\s+)?agenda\s+(uma|um|a|o|reuniao|evento|consulta|compromisso)\b/.test(text)
   if (writeIntent) return false
   return /\b(calendario|compromisso|compromissos|reuniao|reunioes|evento|eventos|agenda)\b/.test(text)
     || /\bo que (eu )?tenho (hoje|amanha)\b/.test(text)
