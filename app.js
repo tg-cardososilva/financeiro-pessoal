@@ -33,7 +33,7 @@ const fullDateFmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'l
 
 const state = {
   session: null,
-  view: 'overview',
+  view: 'home',
   realView: true,
   month: monthKey(new Date()),
   accounts: [],
@@ -151,7 +151,7 @@ async function boot() {
       setTimeout(() => { navigate('jarvis'); toast(result === 'connected' ? 'Google Calendar conectado ao Jarvis.' : result === 'cancelled' ? 'Conexão com Google cancelada.' : 'Não foi possível conectar o Google Calendar.', result === 'connected' ? 'success' : 'error') }, 120)
     }
   } catch (err) {
-    console.error('Falha ao iniciar Financeiro:', err)
+    console.error('Falha ao iniciar Jarvis:', err)
     showBootFailure(err)
   }
 }
@@ -181,6 +181,8 @@ function bindGlobalEvents() {
   $('sidebarClose').addEventListener('click', () => toggleSidebar(false))
   $('mobileOverlay').addEventListener('click', () => toggleSidebar(false))
   $('retryBtn').addEventListener('click', loadData)
+  $('askJarvisBtn')?.addEventListener('click', () => navigate('jarvis'))
+  $('jarvisDockBtn')?.addEventListener('click', () => navigate('jarvis'))
 }
 
 function toggleSidebar(open) { $('sidebar').classList.toggle('open', open); setHidden($('mobileOverlay'), !open) }
@@ -203,8 +205,8 @@ function setAuthMode(mode) {
   state.authMode = mode
   showInfo('authMessage', '')
   const map = {
-    signin: ['Entrar no painel', 'Use seu e-mail e senha para acessar seus dados.', 'Entrar'],
-    signup: ['Criar uma conta', 'Cada pessoa terá dados separados e privados.', 'Criar conta'],
+    signin: ['Entrar no Jarvis', 'Use seu e-mail e senha para acessar seu ambiente pessoal.', 'Entrar'],
+    signup: ['Criar uma conta', 'Cada pessoa terá um ambiente separado e privado.', 'Criar conta'],
     reset: ['Recuperar senha', 'Enviaremos um link seguro para definir uma nova senha.', 'Enviar recuperação']
   }
   const [title, subtitle, cta] = map[mode]
@@ -253,10 +255,26 @@ function navigate(view) {
   state.selectionMode = false
   state.selectedTx.clear()
   document.querySelectorAll('.nav-button').forEach((b) => b.classList.toggle('active', b.dataset.view === view))
-  $('pageTitle').textContent = {
-    overview: 'Visão geral', transactions: 'Transações', purchases: 'Compras', investments: 'Investimentos', import: 'Importar extrato', accounts: 'Contas', jarvis: 'Jarvis'
-  }[view]
-  setHidden($('financeTopActions'), view === 'jarvis')
+  const meta = {
+    home: ['Início', 'AMBIENTE PESSOAL'],
+    jarvis: ['Jarvis', 'ASSISTENTE PESSOAL'],
+    agenda: ['Agenda', 'TEMPO & COMPROMISSOS'],
+    tasks: ['Tarefas', 'PENDÊNCIAS & LEMBRETES'],
+    notes: ['Notas & Ideias', 'MEMÓRIA & CRIAÇÃO'],
+    projects: ['Projetos', 'PLANOS & OBJETIVOS'],
+    overview: ['Visão geral', 'FINANÇAS'],
+    transactions: ['Transações', 'FINANÇAS'],
+    purchases: ['Compras', 'FINANÇAS'],
+    investments: ['Investimentos', 'FINANÇAS'],
+    import: ['Importar extratos', 'FINANÇAS'],
+    accounts: ['Contas', 'FINANÇAS']
+  }[view] || ['Jarvis', 'AMBIENTE PESSOAL']
+  $('pageTitle').textContent = meta[0]
+  $('pageEyebrow').textContent = meta[1]
+  const financeViews = ['overview','transactions','purchases','investments','import','accounts']
+  setHidden($('financeTopActions'), !financeViews.includes(view))
+  setHidden($('personalTopActions'), financeViews.includes(view))
+  setHidden($('jarvisDockBtn'), view === 'jarvis')
   toggleSidebar(false)
   renderMain()
 }
@@ -314,6 +332,7 @@ async function loadData() {
       state.receipts = []
     }
     updateUserChrome()
+    if (!state.jarvis.loaded) loadJarvisData()
   } catch (err) {
     showError(humanError(err))
   } finally {
@@ -345,6 +364,11 @@ function renderMain() {
     $('mainArea').innerHTML = `<div class="content-stack"><div class="skeleton-block h90"></div><div class="kpi-grid">${'<div class="skeleton-block h90"></div>'.repeat(4)}</div><div class="skeleton-block h340"></div></div>`
     return
   }
+  if (state.view === 'home') renderHome()
+  if (state.view === 'agenda') renderAgenda()
+  if (state.view === 'tasks') renderTasks()
+  if (state.view === 'notes') renderNotes()
+  if (state.view === 'projects') renderProjects()
   if (state.view === 'overview') renderOverview()
   if (state.view === 'transactions') renderTransactions()
   if (state.view === 'purchases') renderPurchases()
@@ -2148,7 +2172,7 @@ function openPasswordResetModal() {
 async function loadJarvisData(force = false) {
   if (!state.session || state.jarvis.loading || (state.jarvis.loaded && !force)) return
   state.jarvis.loading = true
-  if (state.view === 'jarvis') renderJarvis()
+  if (['jarvis','home','agenda','tasks','notes','projects'].includes(state.view)) renderMain()
   try {
     const [messages, annotations, notes, tasks, projects, actions, connections] = await Promise.all([
       supabase.from('jarvis_messages').select('*').order('created_at', { ascending: false }).limit(40),
@@ -2176,7 +2200,7 @@ async function loadJarvisData(force = false) {
     toast(state.jarvis.error, 'error')
   } finally {
     state.jarvis.loading = false
-    if (state.view === 'jarvis') renderJarvis()
+    if (['jarvis','home','agenda','tasks','notes','projects'].includes(state.view)) renderMain()
   }
 }
 
@@ -2278,37 +2302,228 @@ async function testJarvisWhatsApp() {
   }
 }
 
+
+function jarvisDateTime(value, options = {}) {
+  if (!value) return 'Sem data definida'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return 'Sem data definida'
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+    ...options
+  }).format(d)
+}
+
+function jarvisProjectName(project) {
+  return project?.name || project?.title || project?.project_name || 'Projeto sem nome'
+}
+
+function jarvisTaskTime(task) {
+  return task?.remind_at || task?.due_at || null
+}
+
+function isSameLocalDay(a, b = new Date()) {
+  if (!a) return false
+  const d = new Date(a)
+  return d.getFullYear() === b.getFullYear() && d.getMonth() === b.getMonth() && d.getDate() === b.getDate()
+}
+
+function personalLoading() {
+  return `<div class="personal-loading"><span class="spinner"></span><span>Sincronizando seu ambiente pessoal...</span></div>`
+}
+
+function bindPersonalNav() {
+  document.querySelectorAll('[data-personal-nav]').forEach((b) => b.addEventListener('click', () => navigate(b.dataset.personalNav)))
+}
+
+async function sendJarvisQuick(message, button = null) {
+  const text = String(message || '').trim()
+  if (!text) return false
+  setBusy(button, true, 'Enviando')
+  try {
+    const { data, error } = await supabase.functions.invoke('jarvis-core', { body: { message: text, channel: 'web', source: `panel_${state.view}` } })
+    if (error) throw error
+    if (data?.error) throw new Error(data.error)
+    state.jarvis.engine = data?.engine || state.jarvis.engine
+    await loadJarvisData(true)
+    if (data?.confirmation_required) toast('Ação preparada e aguardando sua confirmação.', 'success')
+    else toast('Jarvis atualizou seu ambiente.', 'success')
+    return true
+  } catch (err) {
+    toast(humanError(err), 'error')
+    setBusy(button, false)
+    return false
+  }
+}
+
+function renderHome() {
+  if (!state.jarvis.loaded && !state.jarvis.loading) loadJarvisData()
+  const name = state.profile?.display_name || state.session?.user?.email?.split('@')[0] || 'você'
+  const now = new Date()
+  const greeting = now.getHours() < 12 ? 'Bom dia' : now.getHours() < 18 ? 'Boa tarde' : 'Boa noite'
+  const pendingTasks = state.jarvis.tasks.filter((x) => x.status === 'pending').sort((a,b) => new Date(jarvisTaskTime(a) || '2999-01-01') - new Date(jarvisTaskTime(b) || '2999-01-01'))
+  const todayTasks = pendingTasks.filter((x) => isSameLocalDay(jarvisTaskTime(x)))
+  const proposedActions = state.jarvis.actions.filter((x) => x.status === 'proposed')
+  const calendarActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && x.payload?.starts_at).sort((a,b) => new Date(a.payload.starts_at) - new Date(b.payload.starts_at))
+  const upcomingEvents = calendarActions.filter((x) => new Date(x.payload.starts_at) >= new Date(now.getTime() - 60*60*1000)).slice(0,4)
+  const latestNotes = state.jarvis.notes.slice(0,3)
+  const activeProjects = state.jarvis.projects.filter((x) => !['completed','archived','cancelled'].includes(String(x.status || '').toLowerCase())).slice(0,3)
+  const tx = visibleTransactions()
+  const totals = calcTotals(tx)
+  const reviewCount = state.transactions.filter((t) => t.review_status === 'needs_review').length
+  const cashBalance = state.accounts.filter((a) => !['credit_card','virtual'].includes(a.account_type)).reduce((sum,a) => sum + (accountBalanceLabel(a).value || 0), 0)
+  const google = jarvisGoogleConnection()
+  const pendingAnnotations = state.jarvis.annotations.filter((x) => x.reconciliation_status === 'pending').length
+  const attention = []
+  if (proposedActions.length) attention.push(`${proposedActions.length} ação${proposedActions.length > 1 ? 'ões' : ''} aguardando confirmação`)
+  if (todayTasks.length) attention.push(`${todayTasks.length} lembrete${todayTasks.length > 1 ? 's' : ''} para hoje`)
+  if (reviewCount) attention.push(`${reviewCount} transaç${reviewCount > 1 ? 'ões' : 'ão'} financeira${reviewCount > 1 ? 's' : ''} para revisar`)
+  if (pendingAnnotations) attention.push(`${pendingAnnotations} contexto${pendingAnnotations > 1 ? 's' : ''} do Jarvis para conciliar`)
+  if (!attention.length) attention.push('Nenhuma pendência crítica detectada agora')
+
+  $('mainArea').innerHTML = `<div class="content-stack personal-home">
+    <section class="personal-hero">
+      <div><span class="eyebrow">${esc(new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).format(now).toUpperCase())}</span><h2>${esc(greeting)}, ${esc(name)}.</h2><p>Este é o resumo do que merece sua atenção. O financeiro agora é uma parte do seu ambiente, não o ambiente inteiro.</p></div>
+      <button class="button primary personal-hero-cta" data-personal-nav="jarvis" type="button">✦ Perguntar ao Jarvis</button>
+    </section>
+
+    ${state.jarvis.loading && !state.jarvis.loaded ? personalLoading() : ''}
+
+    <section class="home-focus-grid">
+      <article class="home-focus-card today-card">
+        <div class="home-card-head"><div><span class="eyebrow">HOJE</span><h3>Seu dia</h3></div><button data-personal-nav="agenda" type="button">Ver agenda →</button></div>
+        <div class="home-today-list">
+          ${upcomingEvents.length ? upcomingEvents.slice(0,2).map((a) => `<div><span class="home-time">${esc(new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(a.payload.starts_at)))}</span><div><strong>${esc(a.payload.title || 'Compromisso')}</strong><small>${a.status === 'proposed' ? 'Aguardando confirmação' : 'No calendário'}</small></div></div>`).join('') : '<div class="home-empty-line">Nenhum compromisso criado pelo Jarvis para as próximas horas.</div>'}
+          ${todayTasks.length ? todayTasks.slice(0,2).map((t) => `<div><span class="home-time">${jarvisTaskTime(t) ? esc(new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(jarvisTaskTime(t)))) : '•'}</span><div><strong>${esc(t.title)}</strong><small>Lembrete</small></div></div>`).join('') : ''}
+        </div>
+      </article>
+
+      <article class="home-focus-card attention-card">
+        <div class="home-card-head"><div><span class="eyebrow">JARVIS</span><h3>Requer atenção</h3></div><button data-personal-nav="jarvis" type="button">Abrir →</button></div>
+        <div class="attention-list">${attention.slice(0,4).map((x,i) => `<div><span>${i+1}</span><p>${esc(x)}</p></div>`).join('')}</div>
+      </article>
+    </section>
+
+    <section class="home-module-grid">
+      <article class="home-module-card finance-module">
+        <div class="home-card-head"><div><span class="eyebrow">FINANÇAS</span><h3>${money.format(totals.expense)}</h3></div><button data-personal-nav="overview" type="button">Abrir →</button></div>
+        <p>Gasto real em ${esc(monthFmt.format(parseDate(`${state.month}-01`)))}.</p>
+        <div class="mini-stats"><span><b>${money.format(cashBalance)}</b><small>Saldos rastreados</small></span><span><b>${reviewCount}</b><small>Para revisar</small></span></div>
+      </article>
+      <article class="home-module-card">
+        <div class="home-card-head"><div><span class="eyebrow">PROJETOS</span><h3>${activeProjects.length}</h3></div><button data-personal-nav="projects" type="button">Abrir →</button></div>
+        <p>${activeProjects.length ? activeProjects.map(jarvisProjectName).slice(0,2).map(esc).join(' · ') : 'Seus próximos planos podem nascer em uma conversa com o Jarvis.'}</p>
+      </article>
+      <article class="home-module-card">
+        <div class="home-card-head"><div><span class="eyebrow">NOTAS & IDEIAS</span><h3>${state.jarvis.notes.length}</h3></div><button data-personal-nav="notes" type="button">Abrir →</button></div>
+        <p>${latestNotes[0] ? esc(latestNotes[0].title || latestNotes[0].content || 'Última nota') : 'Ideias, referências e memórias ficam organizadas aqui.'}</p>
+      </article>
+    </section>
+
+    <section class="panel home-integrations-panel">
+      <div class="panel-head"><div><span class="eyebrow">INTEGRAÇÕES</span><h2>Seu ecossistema</h2><p>O Jarvis conecta serviços sem transformar cada integração em um aplicativo separado.</p></div></div>
+      <div class="integration-strip">
+        <div class="integration-tile ${google ? 'connected' : ''}"><span class="integration-logo">31</span><div><strong>Google Calendar</strong><small>${google ? 'Conectado' : 'Não conectado'}</small></div><i>${google ? '✓' : '○'}</i></div>
+        <div class="integration-tile configuring"><span class="integration-logo">WA</span><div><strong>WhatsApp</strong><small>Aguardando número de produção</small></div><i>…</i></div>
+        <div class="integration-tile future"><span class="integration-logo">D</span><div><strong>Google Drive</strong><small>Próxima integração</small></div><i>＋</i></div>
+        <div class="integration-tile future"><span class="integration-logo">⌖</span><div><strong>Maps / Places</strong><small>Planejado</small></div><i>＋</i></div>
+        <div class="integration-tile future"><span class="integration-logo">AI</span><div><strong>Document AI</strong><small>Planejado</small></div><i>＋</i></div>
+      </div>
+    </section>
+  </div>`
+  bindPersonalNav()
+}
+
+function renderAgenda() {
+  if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
+  const google = jarvisGoogleConnection()
+  const actions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create').sort((a,b) => new Date(a.payload?.starts_at || a.created_at) - new Date(b.payload?.starts_at || b.created_at))
+  const pending = actions.filter((x) => ['proposed','failed'].includes(x.status))
+  const scheduled = actions.filter((x) => x.status === 'executed')
+  $('mainArea').innerHTML = `<div class="content-stack personal-section">
+    <section class="section-intro"><div><span class="eyebrow">AGENDA</span><h2>Tempo com contexto.</h2><p>Compromissos criados pelo Jarvis, confirmações pendentes e conexão com seu Google Calendar.</p></div><button id="agendaAskJarvis" class="button primary" type="button">✦ Criar compromisso</button></section>
+    <section class="personal-two-col">
+      <div class="panel">
+        <div class="panel-head"><div><h2>Próximos compromissos</h2><p>Eventos conhecidos pelo Jarvis. A leitura completa do calendário será ampliada sem mudar esta interface.</p></div></div>
+        <div class="agenda-list">
+          ${scheduled.length ? scheduled.slice(0,8).map((a) => `<article><div class="agenda-date"><strong>${a.payload?.starts_at ? esc(new Intl.DateTimeFormat('pt-BR',{day:'2-digit'}).format(new Date(a.payload.starts_at))) : '--'}</strong><span>${a.payload?.starts_at ? esc(new Intl.DateTimeFormat('pt-BR',{month:'short'}).format(new Date(a.payload.starts_at))) : ''}</span></div><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span><small>Google Calendar</small></div>${a.payload?.google_event_link ? `<a href="${esc(a.payload.google_event_link)}" target="_blank" rel="noopener">Abrir ↗</a>` : ''}</article>`).join('') : '<div class="personal-empty"><strong>Nenhum evento executado pelo Jarvis.</strong><span>Peça ao assistente para criar um compromisso.</span></div>'}
+        </div>
+      </div>
+      <aside class="personal-side-stack">
+        <section class="panel integration-card-large ${google ? 'connected' : ''}"><span class="integration-logo big">31</span><div><span class="eyebrow">GOOGLE CALENDAR</span><h3>${google ? 'Conectado' : 'Não conectado'}</h3><p>${google ? esc(google.display_name || 'Agenda principal') : 'Autorize sua agenda para executar compromissos.'}</p></div>${google ? '<span class="connection-ok">✓</span>' : '<button id="agendaGoogleConnect" class="button small" type="button">Conectar</button>'}</section>
+        <section class="panel"><div class="panel-head"><div><h2>Aguardando confirmação</h2><p>Ações externas ficam sob seu controle.</p></div></div><div class="pending-action-list">${pending.length ? pending.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" data-jarvis-calendar-action="${esc(a.id)}" type="button" ${google ? '' : 'disabled'}>Confirmar</button></article>`).join('') : '<div class="personal-empty compact"><span>Nenhuma ação pendente.</span></div>'}</div></section>
+      </aside>
+    </section>
+  </div>`
+  $('agendaAskJarvis')?.addEventListener('click', () => navigate('jarvis'))
+  $('agendaGoogleConnect')?.addEventListener('click', connectJarvisGoogleCalendar)
+  document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
+}
+
+function renderTasks() {
+  if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
+  const pending = state.jarvis.tasks.filter((x) => x.status === 'pending').sort((a,b) => new Date(jarvisTaskTime(a) || '2999-01-01') - new Date(jarvisTaskTime(b) || '2999-01-01'))
+  const done = state.jarvis.tasks.filter((x) => x.status !== 'pending')
+  $('mainArea').innerHTML = `<div class="content-stack personal-section">
+    <section class="section-intro"><div><span class="eyebrow">TAREFAS</span><h2>O que precisa acontecer.</h2><p>Lembretes e pendências entendidos em linguagem natural pelo Jarvis.</p></div></section>
+    <section class="panel quick-capture"><div><span class="eyebrow">CAPTURA RÁPIDA</span><h3>Crie uma tarefa falando normalmente.</h3></div><form id="taskQuickForm"><input id="taskQuickInput" type="text" placeholder="Ex.: me lembra amanhã às 9h de mandar o contrato"><button id="taskQuickBtn" class="button primary" type="submit">Adicionar</button></form></section>
+    <section class="personal-two-col wide-main"><div class="panel"><div class="panel-head"><div><h2>Pendentes</h2><p>${pending.length} tarefa${pending.length === 1 ? '' : 's'} em aberto.</p></div></div><div class="task-list">${pending.length ? pending.map((t) => `<article><span class="task-check">○</span><div><strong>${esc(t.title)}</strong><span>${esc(t.description || 'Sem descrição adicional')}</span><small>${jarvisTaskTime(t) ? esc(jarvisDateTime(jarvisTaskTime(t))) : 'Sem horário definido'} · prioridade ${esc(t.priority || 3)}</small></div><span class="status-pill">${isSameLocalDay(jarvisTaskTime(t)) ? 'Hoje' : 'Pendente'}</span></article>`).join('') : '<div class="personal-empty"><strong>Nada pendente.</strong><span>Você pode criar lembretes aqui ou pelo WhatsApp quando a integração estiver pronta.</span></div>'}</div></div><aside class="panel"><div class="panel-head"><div><h2>Concluídas / encerradas</h2><p>Histórico recente.</p></div></div><div class="simple-history">${done.length ? done.slice(0,8).map((t) => `<div><span>✓</span><p><strong>${esc(t.title)}</strong><small>${esc(t.status || 'concluída')}</small></p></div>`).join('') : '<div class="personal-empty compact"><span>Ainda não há histórico.</span></div>'}</div></aside></section>
+  </div>`
+  $('taskQuickForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const input=$('taskQuickInput'); const raw=input.value.trim(); if(!raw) return; const msg=/\b(lembra|lembrete|tarefa)\b/i.test(raw)?`Jarvis, ${raw}`:`Jarvis, me lembra de ${raw}`; if(await sendJarvisQuick(msg,$('taskQuickBtn'))) input.value='' })
+}
+
+function renderNotes() {
+  if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
+  const notes = state.jarvis.notes
+  $('mainArea').innerHTML = `<div class="content-stack personal-section">
+    <section class="section-intro"><div><span class="eyebrow">NOTAS & IDEIAS</span><h2>Memória que você consegue encontrar.</h2><p>Ideias, referências e anotações capturadas pelo Jarvis, sem virar uma pilha de mensagens perdidas.</p></div></section>
+    <section class="panel quick-capture"><div><span class="eyebrow">CAPTURA RÁPIDA</span><h3>O que você quer guardar?</h3></div><form id="noteQuickForm"><input id="noteQuickInput" type="text" placeholder="Ex.: ideia de vídeo sobre fluxo de caixa"><button id="noteQuickBtn" class="button primary" type="submit">Guardar</button></form></section>
+    <section class="notes-grid">${notes.length ? notes.map((n) => `<article class="note-card"><div class="note-type">${esc(n.note_type || 'nota')}</div><h3>${esc(n.title || 'Nota')}</h3><p>${esc(n.content || '')}</p><footer><span>${esc(jarvisDateTime(n.created_at,{hour:undefined,minute:undefined}))}</span>${Array.isArray(n.tags) && n.tags.length ? `<small>${n.tags.slice(0,3).map(esc).join(' · ')}</small>` : ''}</footer></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhuma nota ainda.</strong><span>Comece registrando uma ideia acima.</span></div>'}</section>
+  </div>`
+  $('noteQuickForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const input=$('noteQuickInput'); const raw=input.value.trim(); if(!raw)return; if(await sendJarvisQuick(`Jarvis, anota: ${raw}`,$('noteQuickBtn'))) input.value='' })
+}
+
+function renderProjects() {
+  if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
+  const projects = state.jarvis.projects
+  $('mainArea').innerHTML = `<div class="content-stack personal-section">
+    <section class="section-intro"><div><span class="eyebrow">PROJETOS</span><h2>Planos que ganham contexto.</h2><p>Viagens, trabalho, objetivos e iniciativas podem concentrar tarefas, notas, agenda, arquivos e finanças.</p></div></section>
+    <section class="panel quick-capture"><div><span class="eyebrow">NOVO PROJETO</span><h3>Comece pela intenção.</h3></div><form id="projectQuickForm"><input id="projectQuickInput" type="text" placeholder="Ex.: criar um projeto para a viagem a Buenos Aires"><button id="projectQuickBtn" class="button primary" type="submit">Criar com Jarvis</button></form></section>
+    <section class="projects-grid">${projects.length ? projects.map((p) => `<article class="project-card"><div class="project-mark">◇</div><div><span class="eyebrow">${esc(String(p.status || 'ATIVO').toUpperCase())}</span><h3>${esc(jarvisProjectName(p))}</h3><p>${esc(p.description || p.objective || 'Projeto organizado pelo Jarvis.')}</p><footer><span>Criado ${esc(jarvisDateTime(p.created_at,{hour:undefined,minute:undefined}))}</span></footer></div></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhum projeto estruturado ainda.</strong><span>Crie uma viagem, objetivo ou iniciativa acima.</span></div>'}</section>
+    <section class="project-vision panel"><div><span class="eyebrow">VISÃO 360º</span><h3>Um projeto não será só uma pasta.</h3><p>Na evolução do Jarvis, cada projeto poderá reunir compromissos, tarefas, notas, arquivos do Drive, lugares do Maps e contexto financeiro em uma única linha do tempo.</p></div><div class="project-vision-flow"><span>Agenda</span><b>+</b><span>Tarefas</span><b>+</b><span>Drive</span><b>+</b><span>Lugares</span><b>+</b><span>Finanças</span></div></section>
+  </div>`
+  $('projectQuickForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const input=$('projectQuickInput'); const raw=input.value.trim(); if(!raw)return; if(await sendJarvisQuick(`Jarvis, crie um projeto para ${raw}`,$('projectQuickBtn'))) input.value='' })
+}
+
 function renderJarvis() {
   if (!state.jarvis.loaded && !state.jarvis.loading) {
-    $('mainArea').innerHTML = `<div class="content-stack"><div class="skeleton-block h90"></div><div class="skeleton-block h340"></div></div>`
+    $('mainArea').innerHTML = `<div class="content-stack">${personalLoading()}<div class="skeleton-block h340"></div></div>`
     loadJarvisData()
     return
   }
   const messages = state.jarvis.messages
-  const hasOpenAI = state.jarvis.engine === 'openai'
-  const statusLabel = hasOpenAI ? 'IA conectada' : 'Modo local de teste'
-  const statusClass = hasOpenAI ? 'online' : 'local'
+  const hasOpenAI = state.jarvis.engine === 'openai' || messages.some((m) => m.raw_data?.engine === 'openai')
   const cards = jarvisCreatedSummary()
   const google = jarvisGoogleConnection()
   const calendarActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && ['proposed','failed'].includes(x.status))
+  const pendingActions = state.jarvis.actions.filter((x) => x.status === 'proposed').length
   const loadError = state.jarvis.error ? `<div class="error-banner jarvis-load-error" role="alert"><span>${esc(state.jarvis.error)}</span><button id="jarvisRetryLoad" type="button">Tentar novamente</button></div>` : ''
-  $('mainArea').innerHTML = `<div class="content-stack jarvis-view">
+  $('mainArea').innerHTML = `<div class="content-stack jarvis-view jarvis-v3-view">
     ${loadError}
-    <section class="jarvis-hero">
-      <div class="jarvis-hero-copy"><span class="eyebrow">ASSISTENTE PESSOAL</span><h2>Jarvis</h2><p>Laboratorio autenticado para testar mensagens antes do WhatsApp. Tudo fica vinculado somente ao seu usuario.</p></div>
-      <div class="jarvis-statuses"><span class="jarvis-status ${statusClass}"><i></i>${esc(statusLabel)}</span><span class="jarvis-status waiting"><i></i>WhatsApp aguardando Meta</span></div>
+    <section class="jarvis-hero jarvis-v3-hero">
+      <div class="jarvis-hero-copy"><span class="eyebrow">SEU ASSISTENTE PESSOAL</span><h2>Converse. O Jarvis organiza o resto.</h2><p>Uma única conversa para consultar seu ambiente, registrar contexto, preparar ações e conectar agenda, finanças, projetos e, em breve, WhatsApp, Drive e lugares.</p></div>
+      <div class="jarvis-statuses"><span class="jarvis-status ${hasOpenAI ? 'online' : 'local'}"><i></i>${hasOpenAI ? 'IA conectada' : 'IA disponível'}</span><span class="jarvis-status ${google ? 'online' : 'waiting'}"><i></i>Calendar ${google ? 'conectado' : 'pendente'}</span><span class="jarvis-status waiting"><i></i>WhatsApp em produção</span></div>
     </section>
-    <section class="jarvis-layout">
+    <section class="jarvis-layout jarvis-v3-layout">
       <div class="panel jarvis-chat-panel">
-        <div class="panel-head"><div><h2>Conversa de teste</h2><p>Escreva como voce falaria no WhatsApp. Financeiro vira contexto para conciliacao, nao transacao bancaria.</p></div><button id="jarvisRefresh" class="button small" type="button">Atualizar</button></div>
+        <div class="panel-head"><div><h2>Conversa</h2><p>Pergunte sobre seu painel ou peça uma ação. O mesmo cérebro será usado no WhatsApp.</p></div><button id="jarvisRefresh" class="button small" type="button">Atualizar</button></div>
         <div id="jarvisChat" class="jarvis-chat" aria-live="polite">
-          ${messages.length ? messages.map((m) => `<div class="jarvis-message ${m.direction === 'inbound' ? 'user' : 'assistant'}"><div class="jarvis-bubble"><span>${esc(m.body || m.transcript || '')}</span>${m.direction === 'outbound' ? `<small>${esc(jarvisIntentLabel(m.intent))}</small>` : ''}</div></div>`).join('') : `<div class="jarvis-empty"><strong>Comece com uma mensagem real.</strong><span>Ex.: Jarvis, gastei R$ 42 na Edna no debito. Comprei leite e pao.</span></div>`}
+          ${messages.length ? messages.map((m) => `<div class="jarvis-message ${m.direction === 'inbound' ? 'user' : 'assistant'}"><div class="jarvis-bubble"><span>${esc(m.body || m.transcript || '')}</span>${m.direction === 'outbound' ? `<small>${esc(jarvisIntentLabel(m.intent))}</small>` : ''}</div></div>`).join('') : `<div class="jarvis-empty"><strong>Comece por qualquer assunto.</strong><span>Ex.: “O que tenho amanhã?”, “Quanto gastei este mês?” ou “Anota essa ideia...”.</span></div>`}
         </div>
         <div class="jarvis-quick-prompts">
-          <button type="button" data-jarvis-prompt="Jarvis, gastei R$ 42 na Edna no debito. Comprei leite e pao.">Gasto</button>
-          <button type="button" data-jarvis-prompt="Jarvis, anota uma ideia de video sobre erros comuns no fluxo de caixa.">Ideia</button>
-          <button type="button" data-jarvis-prompt="Jarvis, me lembra amanha as 9h de enviar o contrato.">Lembrete</button>
-          <button type="button" data-jarvis-prompt="Jarvis, agenda reuniao com Carlos sexta as 14h.">Agenda</button>
+          <button type="button" data-jarvis-prompt="Jarvis, o que eu tenho pendente hoje?">Meu dia</button>
+          <button type="button" data-jarvis-prompt="Jarvis, quanto eu gastei este mês e o que merece atenção?">Finanças</button>
+          <button type="button" data-jarvis-prompt="Jarvis, me mostra minhas últimas ideias e notas.">Notas</button>
+          <button type="button" data-jarvis-prompt="Jarvis, quais projetos estão ativos?">Projetos</button>
         </div>
         <form id="jarvisForm" class="jarvis-composer">
           <textarea id="jarvisInput" rows="2" maxlength="2000" placeholder="Fale com o Jarvis..."></textarea>
@@ -2317,32 +2532,24 @@ function renderJarvis() {
         <div id="jarvisMessage" class="form-message hidden"></div>
       </div>
       <aside class="jarvis-side">
-        <section class="panel jarvis-integration">
-          <div class="panel-head"><div><h2>Google Calendar</h2><p>${google ? 'Agenda conectada ao Jarvis.' : 'Conecte sua agenda para executar eventos confirmados.'}</p></div></div>
-          <div class="jarvis-connection ${google ? 'connected' : ''}"><span class="jarvis-connection-icon">31</span><div><strong>${google ? 'Conectado' : 'Não conectado'}</strong><small>${google ? esc(google.display_name || 'Google Calendar') : 'Autorização OAuth segura'}</small></div>${google ? '<span class="connection-ok">✓</span>' : '<button id="jarvisGoogleConnect" class="button small" type="button">Conectar</button>'}</div>
-          ${calendarActions.length ? `<div class="jarvis-calendar-actions"><span class="eyebrow">AGUARDANDO SUA CONFIRMAÇÃO</span>${calendarActions.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" type="button" data-jarvis-calendar-action="${esc(a.id)}" ${google ? '' : 'disabled'}>Confirmar e agendar</button></article>`).join('')}</div>` : ''}
+        <section class="panel jarvis-command-center">
+          <div class="panel-head"><div><span class="eyebrow">CENTRAL DE AÇÕES</span><h2>${pendingActions} aguardando</h2><p>O Jarvis prepara. Você mantém o controle do que sai do sistema.</p></div></div>
+          ${calendarActions.length ? `<div class="jarvis-calendar-actions">${calendarActions.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" type="button" data-jarvis-calendar-action="${esc(a.id)}" ${google ? '' : 'disabled'}>Confirmar</button></article>`).join('')}</div>` : '<div class="personal-empty compact"><span>Nenhuma ação externa pendente agora.</span></div>'}
         </section>
-        <section class="panel jarvis-integration jarvis-whatsapp-test">
-          <div class="panel-head"><div><h2>WhatsApp Cloud API</h2><p>Teste direto pelo Supabase, sem usar o botao de envio da Meta.</p></div></div>
-          <div class="jarvis-connection"><span class="jarvis-connection-icon">WA</span><div><strong>Diagnostico ativo</strong><small>Usa os secrets protegidos no Supabase</small></div><span class="connection-ok">✓</span></div>
-          <label class="field-label">Numero de destino
-            <input id="jarvisWhatsAppNumber" type="tel" inputmode="numeric" placeholder="5521999999999" autocomplete="tel">
-          </label>
-          <button id="jarvisWhatsAppTest" class="button primary full" type="button">Testar WhatsApp</button>
-          <div id="jarvisWhatsAppResult" class="form-message hidden" aria-live="polite"></div>
-          <small class="jarvis-test-note">O teste usa o template oficial <b>hello_world</b>. Digite DDI + DDD + numero, somente numeros.</small>
+        <section class="panel jarvis-integrations-compact">
+          <div class="panel-head"><div><h2>Integrações</h2><p>Um assistente, vários canais e serviços.</p></div></div>
+          <div class="compact-integration ${google ? 'connected' : ''}"><span>31</span><div><strong>Google Calendar</strong><small>${google ? esc(google.display_name || 'Conectado') : 'Não conectado'}</small></div>${google ? '<b>✓</b>' : '<button id="jarvisGoogleConnect" class="button small" type="button">Conectar</button>'}</div>
+          <div class="compact-integration configuring"><span>WA</span><div><strong>WhatsApp</strong><small>Número dedicado aguardando ativação</small></div><b>…</b></div>
+          <div class="compact-integration future"><span>D</span><div><strong>Google Drive</strong><small>Próxima integração</small></div><b>＋</b></div>
         </section>
-        <section class="panel"><div class="panel-head"><div><h2>O que o Jarvis guardou</h2><p>Estruturas criadas pelas suas mensagens.</p></div></div><div class="jarvis-metric-list">${cards.map(([label,value,sub]) => `<div><span>${esc(label)}</span><strong>${value}</strong><small>${esc(sub)}</small></div>`).join('')}</div></section>
-        <section class="panel jarvis-rules"><span class="eyebrow">REGRAS DE SEGURANCA</span><h3>Contexto primeiro. Acao depois.</h3><p>Gastos e notas podem ser registrados sem confirmacao. Agenda e outras acoes externas ficam como proposta ate voce aprovar.</p><div><span>Financeiro</span><b>Memoria para conciliar</b></div><div><span>Agenda</span><b>Confirmacao obrigatoria</b></div><div><span>Usuario</span><b>Isolado por login</b></div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Memória estruturada</h2><p>O que já existe por trás da conversa.</p></div></div><div class="jarvis-metric-list">${cards.map(([label,value,sub]) => `<div><span>${esc(label)}</span><strong>${value}</strong><small>${esc(sub)}</small></div>`).join('')}</div></section>
+        <section class="panel jarvis-rules"><span class="eyebrow">COMO O JARVIS AGE</span><h3>Conversa primeiro. Ação com contexto.</h3><p>Notas, ideias e contexto financeiro podem ser registrados diretamente. Ações externas sensíveis continuam pedindo confirmação.</p><div><span>Painel</span><b>Central visual</b></div><div><span>WhatsApp</span><b>Canal móvel</b></div><div><span>Dados</span><b>Mesmo núcleo</b></div></section>
       </aside>
     </section>
   </div>`
   $('jarvisRetryLoad')?.addEventListener('click', () => { state.jarvis.loaded = false; state.jarvis.error = null; loadJarvisData(true) })
   $('jarvisRefresh')?.addEventListener('click', () => loadJarvisData(true))
   $('jarvisGoogleConnect')?.addEventListener('click', connectJarvisGoogleCalendar)
-  const waNumber = $('jarvisWhatsAppNumber')
-  if (waNumber) waNumber.value = localStorage.getItem('jarvis_whatsapp_test_number') || ''
-  $('jarvisWhatsAppTest')?.addEventListener('click', testJarvisWhatsApp)
   document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
   document.querySelectorAll('[data-jarvis-prompt]').forEach((b) => b.addEventListener('click', () => { $('jarvisInput').value = b.dataset.jarvisPrompt; $('jarvisInput').focus() }))
   $('jarvisForm')?.addEventListener('submit', sendJarvisMessage)

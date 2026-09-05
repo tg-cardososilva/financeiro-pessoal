@@ -1,56 +1,32 @@
-# Financeiro Pessoal v2.2.11
+# Jarvis v3.0.0 — Ambiente Pessoal 360º
 
-Atualização focada em separar fluxo mensal de saldo/patrimônio acumulado.
+Esta versão reposiciona o projeto: Finanças deixa de ser a home principal e passa a ser um módulo dentro do ambiente pessoal Jarvis.
 
-## Novidades
-- Tela Contas mostra **saldo atual** independente do mês selecionado.
-- Inter Conta Corrente inicia em R$ 8,00, usando o saldo final do extrato de 31/08.
-- Mercado Pago Saldo inicia em R$ 0,00, usando o saldo final do PDF.
-- Cartão Alimentação inicia em R$ 601,00, como saldo atual confirmado.
-- Mercado Pago Cofrinho mostra R$ 2.220,80 e continua ligado à posição de investimento.
-- Extratos futuros do Inter Conta atualizam automaticamente o saldo quando o CSV trouxer saldo pós-transação.
-- PDFs do Mercado Pago atualizam automaticamente o saldo final.
-- Prints do Cofrinho com saldo reconhecido atualizam a posição e o saldo da conta.
-- O editor de Contas permite corrigir/confirmar manualmente saldo e data do saldo.
+## Nova arquitetura
 
-## Publicação
-Substitua no GitHub Pages:
+- Início: resumo do dia, atenção do Jarvis, finanças, projetos, notas e integrações.
+- Jarvis: conversa central, ações pendentes e integrações.
+- Agenda: Google Calendar, eventos criados pelo Jarvis e confirmações pendentes.
+- Tarefas: lembretes e captura rápida em linguagem natural.
+- Notas & Ideias: memória estruturada e captura rápida.
+- Projetos: projetos existentes e criação por conversa com o Jarvis.
+- Finanças: preserva Visão geral, Transações, Compras, Investimentos, Contas e Importação.
+- Roadmap visível: Drive, Maps/Places e Document AI.
+
+## Filosofia de canal
+
+O painel é a central visual. O WhatsApp será o canal móvel do mesmo Jarvis, usando o mesmo núcleo e os mesmos dados. A interface já sinaliza o WhatsApp como integração em configuração de produção.
+
+## Instalação no GitHub Pages
+
+Substitua os três arquivos na raiz do repositório:
+
 - index.html
 - app.js
 - styles.css
 
+Depois aguarde o GitHub Pages publicar e recarregue a página com cache limpo se necessário.
 
-## v2.2.11
-- Resumo automático no final da lista de transações quando houver filtro ativo.
-- Para despesas: total gasto, quantidade de lançamentos e ticket médio.
-- Para receitas: total recebido, quantidade e valor médio.
-- Para filtros mistos: entradas, saídas e saldo líquido.
-- Transferências internas são mostradas, mas não distorcem o somatório financeiro.
+## Observação
 
-
-## v2.2.11
-- Gráfico de Evolução financeira interativo: hover/toque mostra data e valor acumulado do dia.
-- Tooltip navegável também por teclado.
-
-
-## v2.3.1 - Jarvis Lab
-- Novo item Jarvis no menu.
-- Simulador autenticado dentro do painel.
-- Conversa salva em jarvis_messages.
-- Chamada ao Edge Function jarvis-core.
-- OpenAI opcional via segredo OPENAI_API_KEY; sem a chave, usa regras locais apenas para validar o roteamento.
-- WhatsApp continua desacoplado e sera conectado depois pela identidade do usuario.
-
-
-## v2.3.1
-- Corrige acesso autenticado as tabelas do Jarvis no Supabase.
-- Evita loop de carregamento caso o Jarvis encontre erro.
-- Corrige estouro horizontal em Chrome a 100% e antecipa o reflow do dashboard em telas desktop menores.
-
-
-## v2.3.2 - Google Calendar
-- Jarvis Lab mostra status da conexão Google Calendar.
-- Botão Conectar inicia OAuth pelo Edge Function jarvis-google-oauth.
-- Retorno do Google leva de volta automaticamente ao Jarvis Lab.
-- Propostas de agenda pendentes aparecem para confirmação.
-- Botão Confirmar e agendar executa jarvis-calendar e cria o evento real somente após aprovação.
+Esta versão não remove nem migra os dados financeiros existentes. Ela reorganiza a experiência em volta do Jarvis e reaproveita as tabelas Jarvis já existentes no Supabase.

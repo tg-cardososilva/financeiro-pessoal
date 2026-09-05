@@ -4,39 +4,39 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="theme-color" content="#f3f4f1" />
-  <title>Financeiro Pessoal</title>
+  <title>Jarvis · Ambiente pessoal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=2.3.3" />
+  <link rel="stylesheet" href="./styles.css?v=3.0.0" />
 </head>
 <body>
   <div id="splash" class="splash" aria-live="polite">
-    <div class="brand-orb">F</div>
-    <div class="splash-copy"><strong>Financeiro</strong><span>Organizando seu painel...</span></div>
+    <div class="brand-orb jarvis-orb">J</div>
+    <div class="splash-copy"><strong>Jarvis</strong><span>Preparando seu ambiente pessoal...</span></div>
   </div>
 
   <section id="authView" class="auth-shell hidden">
-    <div class="auth-story">
-      <div class="auth-brand"><div class="brand-orb light">F</div><span>Financeiro</span></div>
+    <div class="auth-story jarvis-auth-story">
+      <div class="auth-brand"><div class="brand-orb light jarvis-orb">J</div><span>Jarvis</span></div>
       <div class="auth-story-copy">
-        <span class="eyebrow inverse">PAINEL FINANCEIRO PRIVADO</span>
-        <h1>Seu dinheiro explicado, não apenas listado.</h1>
-        <p>Contas, benefícios, compras agrupadas, notas fiscais e gastos pagos por terceiros em uma única leitura.</p>
+        <span class="eyebrow inverse">AMBIENTE PESSOAL PRIVADO</span>
+        <h1>Sua vida organizada em um único lugar.</h1>
+        <p>Agenda, tarefas, ideias, projetos, finanças e integrações conectadas a um assistente que entende contexto.</p>
       </div>
       <div class="auth-proof-grid">
-        <article><span>01</span><strong>Sem duplicidades</strong><p>Transferências internas e pagamento de fatura não viram gasto novamente.</p></article>
-        <article><span>02</span><strong>Compra real</strong><p>Cartão alimentação + débito podem formar uma única compra.</p></article>
-        <article><span>03</span><strong>Privacidade</strong><p>Cada login enxerga somente os próprios dados.</p></article>
+        <article><span>01</span><strong>Uma só memória</strong><p>O Jarvis conecta informações sem obrigar você a lembrar em qual tela cada coisa está.</p></article>
+        <article><span>02</span><strong>Ações sob controle</strong><p>O assistente prepara e executa ações externas somente quando sua confirmação for necessária.</p></article>
+        <article><span>03</span><strong>Privacidade</strong><p>Cada login enxerga somente o próprio ambiente e os próprios dados.</p></article>
       </div>
     </div>
 
     <div class="auth-form-side">
       <form id="authForm" class="auth-card">
-        <div class="mobile-brand"><div class="brand-orb">F</div><span>Financeiro</span></div>
+        <div class="mobile-brand"><div class="brand-orb jarvis-orb">J</div><span>Jarvis</span></div>
         <span class="eyebrow">ACESSO SEGURO</span>
-        <h2 id="authTitle">Entrar no painel</h2>
-        <p id="authSubtitle" class="muted">Use seu e-mail e senha para acessar seus dados.</p>
+        <h2 id="authTitle">Entrar no Jarvis</h2>
+        <p id="authSubtitle" class="muted">Use seu e-mail e senha para acessar seu ambiente pessoal.</p>
 
         <label class="field-label">E-mail
           <input id="authEmail" type="email" placeholder="voce@email.com" autocomplete="email" required>
@@ -56,32 +56,48 @@
           <button type="button" class="text-button" data-auth="signup">Criar uma conta</button>
         </div>
 
-        <div class="security-note"><span>✓</span><p>Autenticação por Supabase Auth. Os dados financeiros ficam protegidos por usuário.</p></div>
+        <div class="security-note"><span>✓</span><p>Autenticação por Supabase Auth. Seu ambiente é separado por usuário.</p></div>
       </form>
     </div>
   </section>
 
   <div id="appView" class="app-shell hidden">
-    <aside id="sidebar" class="sidebar">
+    <aside id="sidebar" class="sidebar jarvis-sidebar">
       <div class="sidebar-head">
-        <div class="sidebar-brand"><div class="brand-orb light">F</div><span>Financeiro</span></div>
+        <div class="sidebar-brand"><div class="brand-orb light jarvis-orb">J</div><span>Jarvis</span></div>
         <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="Fechar menu">×</button>
       </div>
 
-      <div class="sidebar-caption">PAINEL</div>
+      <div class="sidebar-caption">SEU AMBIENTE</div>
       <nav class="sidebar-nav" aria-label="Navegação principal">
-        <button class="nav-button active" data-view="overview"><span class="nav-icon">⌂</span><span>Visão geral</span></button>
+        <button class="nav-button active" data-view="home"><span class="nav-icon">⌂</span><span>Início</span></button>
+        <button class="nav-button jarvis-nav" data-view="jarvis"><span class="nav-icon">✦</span><span>Jarvis</span><span class="nav-badge jarvis-beta">AI</span></button>
+        <button class="nav-button" data-view="agenda"><span class="nav-icon">□</span><span>Agenda</span></button>
+        <button class="nav-button" data-view="tasks"><span class="nav-icon">✓</span><span>Tarefas</span></button>
+        <button class="nav-button" data-view="notes"><span class="nav-icon">✎</span><span>Notas & Ideias</span></button>
+        <button class="nav-button" data-view="projects"><span class="nav-icon">◇</span><span>Projetos</span></button>
+      </nav>
+
+      <div class="sidebar-caption finance-caption">FINANÇAS</div>
+      <nav class="sidebar-nav finance-nav" aria-label="Navegação financeira">
+        <button class="nav-button" data-view="overview"><span class="nav-icon">◌</span><span>Visão geral</span></button>
         <button class="nav-button" data-view="transactions"><span class="nav-icon">≡</span><span>Transações</span><span id="reviewBadge" class="nav-badge hidden">0</span></button>
         <button class="nav-button" data-view="purchases"><span class="nav-icon">◫</span><span>Compras</span></button>
         <button class="nav-button" data-view="investments"><span class="nav-icon">↗</span><span>Investimentos</span></button>
-        <button class="nav-button" data-view="import"><span class="nav-icon">⇧</span><span>Importar extrato</span></button>
         <button class="nav-button" data-view="accounts"><span class="nav-icon">▣</span><span>Contas</span></button>
-        <button class="nav-button jarvis-nav" data-view="jarvis"><span class="nav-icon">&#10022;</span><span>Jarvis</span><span class="nav-badge jarvis-beta">LAB</span></button>
+        <button class="nav-button" data-view="import"><span class="nav-icon">⇧</span><span>Importar extratos</span></button>
       </nav>
 
-      <div class="sidebar-help">
+      <div class="sidebar-caption roadmap-caption">EM EVOLUÇÃO</div>
+      <div class="sidebar-roadmap" aria-label="Próximos módulos">
+        <span><b>▤</b> Arquivos / Drive <small>próximo</small></span>
+        <span><b>⌖</b> Lugares / Maps <small>próximo</small></span>
+        <span><b>◎</b> Documentos inteligentes <small>próximo</small></span>
+      </div>
+
+      <div class="sidebar-help jarvis-sidebar-help">
         <span class="sidebar-help-icon">✦</span>
-        <div><strong>Leitura financeira real</strong><p>Benefícios e pagamentos por terceiros sem distorcer seu saldo bancário.</p></div>
+        <div><strong>Jarvis em todo lugar</strong><p>O painel é a central visual. O WhatsApp será o canal móvel para conversar, consultar e confirmar ações.</p></div>
       </div>
 
       <div class="sidebar-user">
@@ -94,21 +110,26 @@
     <button id="mobileOverlay" class="mobile-overlay hidden" type="button" aria-label="Fechar menu"></button>
 
     <main class="main-content">
-      <header class="topbar">
+      <header class="topbar jarvis-topbar">
         <div class="topbar-title">
           <button id="menuBtn" class="menu-button" type="button" aria-label="Abrir menu">☰</button>
-          <div><span class="eyebrow">FINANÇAS PESSOAIS</span><h1 id="pageTitle">Visão geral</h1></div>
+          <div><span id="pageEyebrow" class="eyebrow">AMBIENTE PESSOAL</span><h1 id="pageTitle">Início</h1></div>
         </div>
-        <div id="financeTopActions" class="top-actions">
+        <div id="financeTopActions" class="top-actions hidden">
           <input id="monthPicker" class="month-picker" type="month" aria-label="Mês do painel">
           <button id="viewModeBtn" class="button subtle" type="button">Visão real</button>
           <button id="newEntryBtn" class="button primary" type="button">＋ Novo lançamento</button>
+        </div>
+        <div id="personalTopActions" class="top-actions">
+          <button id="askJarvisBtn" class="button primary jarvis-ask-button" type="button">✦ Falar com Jarvis</button>
         </div>
       </header>
 
       <div id="errorBanner" class="error-banner hidden" role="alert"><span id="errorText"></span><button id="retryBtn" type="button">Tentar novamente</button></div>
       <div id="mainArea"></div>
     </main>
+
+    <button id="jarvisDockBtn" class="jarvis-dock" type="button" aria-label="Falar com Jarvis"><span>✦</span><b>Jarvis</b></button>
   </div>
 
   <div id="modalHost"></div>
@@ -118,10 +139,10 @@
       if (window.__financeiroBooted) return;
       var copy = document.querySelector('#splash .splash-copy');
       if (copy && !document.getElementById('bootRetry')) {
-        copy.innerHTML = '<strong>O painel demorou mais que o esperado</strong><span>Atualize a página. Se continuar, o erro será mostrado aqui em vez de ficar carregando para sempre.</span>';
+        copy.innerHTML = '<strong>O Jarvis demorou mais que o esperado</strong><span>Atualize a página. Se continuar, o erro será mostrado aqui em vez de ficar carregando para sempre.</span>';
       }
     }, 10000);
   </script>
-  <script type="module" src="./app.js?v=2.3.3"></script>
+  <script type="module" src="./app.js?v=3.0.0"></script>
 </body>
 </html>
