@@ -333,3 +333,29 @@ input:focus,select:focus,textarea:focus,button:focus-visible{box-shadow:0 0 0 3p
 .topbar{margin-bottom:20px}
 @media(max-height:840px) and (min-width:881px){.sidebar-mini-status{display:none}.nav-button{min-height:36px}.nav-subitem{min-height:30px!important}.sidebar-head{padding-bottom:10px}}
 @media(max-width:880px){.sidebar{padding-top:15px}.sidebar-mini-status{margin-top:14px}.jarvis-dock{width:46px}.jarvis-dock:hover{width:46px}.jarvis-dock:hover b{max-width:0;opacity:0}}
+
+
+/* v3.3.0 real calendar */
+.home-focus-grid-agenda { align-items: stretch; }
+.real-agenda-card { min-height: 100%; }
+.home-agenda-groups { display: grid; gap: 14px; margin-top: 14px; }
+.home-agenda-group { border: 1px solid var(--line, #e7e9e7); border-radius: 14px; padding: 12px; background: rgba(255,255,255,.62); }
+.home-agenda-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.home-agenda-group-head strong { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+.home-agenda-group-head span { min-width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: #eef1ef; font-size: 11px; font-weight: 700; }
+.home-agenda-items { display: grid; gap: 8px; }
+.home-agenda-item { display: grid; grid-template-columns: 72px 1fr; gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid rgba(20,35,45,.07); }
+.home-agenda-item:first-child { border-top: 0; padding-top: 0; }
+.home-agenda-item .home-time { font-size: 12px; font-weight: 700; color: #53616b; }
+.home-agenda-item strong { display: block; font-size: 14px; }
+.home-agenda-item small { display: block; margin-top: 3px; color: #71808a; font-size: 11px; }
+.home-agenda-item.proposed { border-left: 3px solid #b98d42; padding-left: 10px; }
+.home-agenda-empty { padding: 8px 0; color: #7c888f; font-size: 12px; }
+.home-agenda-proposals { margin-top: 16px; padding-top: 14px; border-top: 1px dashed #d9ddda; }
+.calendar-state-card { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px; border: 1px solid #e2e6e3; border-radius: 14px; background: #f8f9f7; }
+.calendar-state-card strong { width: 100%; }
+.calendar-state-card span:not(.spinner) { color: #66737b; font-size: 12px; }
+.calendar-state-card.error { border-color: #ead7d3; background: #fff8f6; }
+@media (max-width: 760px) {
+  .home-agenda-item { grid-template-columns: 62px 1fr; }
+}
