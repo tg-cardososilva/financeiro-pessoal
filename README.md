@@ -1,4 +1,4 @@
-# Jarvis v3.1.0
+# Jarvis v3.1.1
 
 Atualização visual do ambiente pessoal com a identidade oficial do Jarvis.
 
@@ -12,3 +12,6 @@ Atualização visual do ambiente pessoal com a identidade oficial do Jarvis.
 
 ## Publicação
 Substitua `index.html`, `app.js` e `styles.css` e envie também a pasta `assets/` para a raiz do repositório.
+
+
+Correção v3.1.1: o avatar do Jarvis agora está embutido no CSS. A pasta assets continua incluída, mas a interface não depende mais dela para exibir a imagem. Isso evita imagem quebrada no GitHub Pages mesmo se a pasta não for publicada corretamente.
