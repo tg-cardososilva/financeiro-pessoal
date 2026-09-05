@@ -1,22 +1,22 @@
-# Jarvis v3.2.0 — Home viva
+# Jarvis v3.2.1 - sidebar limpa
 
-Arquivos para subir **diretamente na raiz** do repositório GitHub Pages:
+Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
 
 - `index.html`
 - `app.js`
 - `styles.css`
 - `jarvis-avatar.png`
 
-Não crie pasta `assets`.
+Nao crie pasta `assets`.
 
-## Principais correções
+## Melhorias visuais
 
-- Saudação usa **Thiago** no perfil atual, sem exibir o e-mail.
-- Home 360º usa dados reais já disponíveis de tarefas, ações, notas, projetos, finanças e integrações.
-- Compromissos pendentes não aparecem como se já estivessem no calendário.
-- Ações de calendário semanticamente duplicadas são consolidadas no painel.
-- Contagem de projetos ativos não fica limitada aos três cards de prévia.
-- Dados conhecidos dos testes de 05/09/2026 são ocultados imediatamente e a versão tenta removê-los do Supabase uma vez, usando a sessão autenticada e filtros exatos.
-- Avatar do Jarvis é carregado da raiz (`./jarvis-avatar.png`) para combinar com o fluxo manual de upload no GitHub.
+- `Financas` virou um item principal recolhivel. Ao clicar, abre o submenu com Visao geral, Transacoes, Compras, Investimentos, Contas e Importar extratos.
+- O submenu financeiro abre automaticamente quando uma tela financeira esta ativa e lembra a preferencia de abertura.
+- `Em evolucao` tambem virou um grupo recolhivel para reduzir ruido visual.
+- O card grande de ajuda da sidebar foi substituido por um status compacto do WhatsApp.
+- O botao flutuante do Jarvis fica compacto e expande apenas ao passar o mouse. Na Home e na propria tela do Jarvis ele fica oculto para evitar duplicacao.
+- Sidebar ficou um pouco mais estreita, com espacamentos e hierarquia mais leves.
+- A saudacao do perfil atual agora prioriza `Thiago` antes do nome salvo no perfil, evitando exibir `tgcs.business`.
 
-Após publicar, faça `Command + Shift + R`.
+Depois de publicar, use `Command + Shift + R`.

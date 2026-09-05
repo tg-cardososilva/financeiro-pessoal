@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=3.2.0" />
+  <link rel="stylesheet" href="./styles.css?v=3.2.1" />
 </head>
 <body>
   <div id="splash" class="splash" aria-live="polite">
@@ -68,36 +68,40 @@
         <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="Fechar menu">×</button>
       </div>
 
-      <div class="sidebar-caption">SEU AMBIENTE</div>
-      <nav class="sidebar-nav" aria-label="Navegação principal">
-        <button class="nav-button active" data-view="home"><span class="nav-icon">⌂</span><span>Início</span></button>
+      <nav class="sidebar-nav sidebar-primary" aria-label="Navegacao principal">
+        <button class="nav-button active" data-view="home"><span class="nav-icon">⌂</span><span>In&iacute;cio</span></button>
         <button class="nav-button jarvis-nav" data-view="jarvis"><span class="nav-icon jarvis-nav-avatar"><img src="./jarvis-avatar.png" alt=""></span><span>Jarvis</span><span class="nav-badge jarvis-beta">AI</span></button>
         <button class="nav-button" data-view="agenda"><span class="nav-icon">□</span><span>Agenda</span></button>
         <button class="nav-button" data-view="tasks"><span class="nav-icon">✓</span><span>Tarefas</span></button>
-        <button class="nav-button" data-view="notes"><span class="nav-icon">✎</span><span>Notas & Ideias</span></button>
+        <button class="nav-button" data-view="notes"><span class="nav-icon">✎</span><span>Notas &amp; Ideias</span></button>
         <button class="nav-button" data-view="projects"><span class="nav-icon">◇</span><span>Projetos</span></button>
+
+        <button id="financeMenuToggle" class="nav-button nav-group-toggle" type="button" aria-expanded="false" aria-controls="financeSubnav">
+          <span class="nav-icon">◌</span><span>Finan&ccedil;as</span>
+          <span class="nav-trailing"><span id="financeReviewBadge" class="nav-badge hidden">0</span><span class="nav-chevron">⌄</span></span>
+        </button>
+        <div id="financeSubnav" class="nav-submenu" aria-label="Navegacao financeira" aria-hidden="true">
+          <button class="nav-button nav-subitem" data-view="overview"><span class="nav-icon">◌</span><span>Vis&atilde;o geral</span></button>
+          <button class="nav-button nav-subitem" data-view="transactions"><span class="nav-icon">≡</span><span>Transa&ccedil;&otilde;es</span><span id="reviewBadge" class="nav-badge hidden">0</span></button>
+          <button class="nav-button nav-subitem" data-view="purchases"><span class="nav-icon">◫</span><span>Compras</span></button>
+          <button class="nav-button nav-subitem" data-view="investments"><span class="nav-icon">↗</span><span>Investimentos</span></button>
+          <button class="nav-button nav-subitem" data-view="accounts"><span class="nav-icon">▣</span><span>Contas</span></button>
+          <button class="nav-button nav-subitem" data-view="import"><span class="nav-icon">⇧</span><span>Importar extratos</span></button>
+        </div>
+
+        <button id="futureMenuToggle" class="nav-button nav-group-toggle nav-group-muted" type="button" aria-expanded="false" aria-controls="futureSubnav">
+          <span class="nav-icon">＋</span><span>Em evolu&ccedil;&atilde;o</span><span class="nav-chevron">⌄</span>
+        </button>
+        <div id="futureSubnav" class="nav-submenu nav-submenu-roadmap" aria-label="Proximos modulos" aria-hidden="true">
+          <div class="roadmap-item"><span class="nav-icon">▤</span><span>Arquivos / Drive</span><small>pr&oacute;ximo</small></div>
+          <div class="roadmap-item"><span class="nav-icon">⌖</span><span>Lugares / Maps</span><small>pr&oacute;ximo</small></div>
+          <div class="roadmap-item"><span class="nav-icon">◎</span><span>Documentos inteligentes</span><small>pr&oacute;ximo</small></div>
+        </div>
       </nav>
 
-      <div class="sidebar-caption finance-caption">FINANÇAS</div>
-      <nav class="sidebar-nav finance-nav" aria-label="Navegação financeira">
-        <button class="nav-button" data-view="overview"><span class="nav-icon">◌</span><span>Visão geral</span></button>
-        <button class="nav-button" data-view="transactions"><span class="nav-icon">≡</span><span>Transações</span><span id="reviewBadge" class="nav-badge hidden">0</span></button>
-        <button class="nav-button" data-view="purchases"><span class="nav-icon">◫</span><span>Compras</span></button>
-        <button class="nav-button" data-view="investments"><span class="nav-icon">↗</span><span>Investimentos</span></button>
-        <button class="nav-button" data-view="accounts"><span class="nav-icon">▣</span><span>Contas</span></button>
-        <button class="nav-button" data-view="import"><span class="nav-icon">⇧</span><span>Importar extratos</span></button>
-      </nav>
-
-      <div class="sidebar-caption roadmap-caption">EM EVOLUÇÃO</div>
-      <div class="sidebar-roadmap" aria-label="Próximos módulos">
-        <span><b>▤</b> Arquivos / Drive <small>próximo</small></span>
-        <span><b>⌖</b> Lugares / Maps <small>próximo</small></span>
-        <span><b>◎</b> Documentos inteligentes <small>próximo</small></span>
-      </div>
-
-      <div class="sidebar-help jarvis-sidebar-help">
-        <span class="sidebar-help-icon">✦</span>
-        <div><strong>Jarvis em todo lugar</strong><p>O painel é a central visual. O WhatsApp será o canal móvel para conversar, consultar e confirmar ações.</p></div>
+      <div class="sidebar-mini-status" title="O WhatsApp sera o canal movel do Jarvis assim que o novo numero for ativado.">
+        <span class="mini-status-dot"></span>
+        <div><strong>WhatsApp</strong><small>Aguardando n&uacute;mero de produ&ccedil;&atilde;o</small></div>
       </div>
 
       <div class="sidebar-user">
@@ -143,6 +147,6 @@
       }
     }, 10000);
   </script>
-  <script type="module" src="./app.js?v=3.2.0"></script>
+  <script type="module" src="./app.js?v=3.2.1"></script>
 </body>
 </html>

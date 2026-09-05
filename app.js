@@ -86,15 +86,15 @@ function parseMoneyInput(v) {
 }
 
 function personalDisplayName() {
+  const email = String(state.session?.user?.email || '').toLowerCase()
+  if (email === 'tgcs.business@gmail.com') return 'Thiago'
   const profileName = String(state.profile?.display_name || '').trim()
   if (profileName) return profileName.split(/\s+/)[0]
   const meta = state.session?.user?.user_metadata || {}
   const metaName = String(meta.first_name || meta.given_name || meta.full_name || meta.name || '').trim()
   if (metaName) return metaName.split(/\s+/)[0]
-  const email = String(state.session?.user?.email || '').toLowerCase()
-  if (email === 'tgcs.business@gmail.com') return 'Thiago'
-  const local = email.split('@')[0] || 'Você'
-  return local.replace(/[._-]+/g, ' ').trim().split(/\s+/)[0] || 'Você'
+  const local = email.split('@')[0] || 'Voce'
+  return local.replace(/[._-]+/g, ' ').trim().split(/\s+/)[0] || 'Voce'
 }
 
 const JARVIS_TEST_CLEANUP_KEY = 'jarvis_v32_test_cleanup_20260905'
@@ -278,9 +278,53 @@ function bindGlobalEvents() {
   $('retryBtn').addEventListener('click', loadData)
   $('askJarvisBtn')?.addEventListener('click', () => navigate('jarvis'))
   $('jarvisDockBtn')?.addEventListener('click', () => navigate('jarvis'))
+  $('financeMenuToggle')?.addEventListener('click', () => toggleSidebarGroup('finance'))
+  $('futureMenuToggle')?.addEventListener('click', () => toggleSidebarGroup('future'))
+  initSidebarGroups()
 }
 
 function toggleSidebar(open) { $('sidebar').classList.toggle('open', open); setHidden($('mobileOverlay'), !open) }
+
+const SIDEBAR_GROUPS = {
+  finance: { toggle: 'financeMenuToggle', panel: 'financeSubnav', key: 'jarvis_sidebar_finance_open' },
+  future: { toggle: 'futureMenuToggle', panel: 'futureSubnav', key: 'jarvis_sidebar_future_open' }
+}
+
+function setSidebarGroup(group, open, persist = true) {
+  const cfg = SIDEBAR_GROUPS[group]
+  if (!cfg) return
+  const toggle = $(cfg.toggle)
+  const panel = $(cfg.panel)
+  if (!toggle || !panel) return
+  toggle.setAttribute('aria-expanded', open ? 'true' : 'false')
+  panel.setAttribute('aria-hidden', open ? 'false' : 'true')
+  panel.classList.toggle('open', !!open)
+  if (persist) {
+    try { localStorage.setItem(cfg.key, open ? '1' : '0') } catch (_) {}
+  }
+}
+
+function toggleSidebarGroup(group) {
+  const cfg = SIDEBAR_GROUPS[group]
+  const toggle = cfg ? $(cfg.toggle) : null
+  if (!toggle) return
+  const open = toggle.getAttribute('aria-expanded') !== 'true'
+  setSidebarGroup(group, open)
+  if (open) {
+    Object.keys(SIDEBAR_GROUPS).filter((name) => name !== group).forEach((name) => setSidebarGroup(name, false))
+  }
+}
+
+function initSidebarGroups() {
+  let financeOpen = false
+  let futureOpen = false
+  try {
+    financeOpen = localStorage.getItem(SIDEBAR_GROUPS.finance.key) === '1'
+    futureOpen = localStorage.getItem(SIDEBAR_GROUPS.future.key) === '1'
+  } catch (_) {}
+  setSidebarGroup('finance', financeOpen, false)
+  setSidebarGroup('future', futureOpen, false)
+}
 
 function renderSession() {
   setHidden($('splash'), true)
@@ -350,7 +394,10 @@ function navigate(view) {
   state.view = view
   state.selectionMode = false
   state.selectedTx.clear()
-  document.querySelectorAll('.nav-button').forEach((b) => b.classList.toggle('active', b.dataset.view === view))
+  const financeViews = ['overview','transactions','purchases','investments','import','accounts']
+  document.querySelectorAll('.nav-button[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view))
+  $('financeMenuToggle')?.classList.toggle('active-parent', financeViews.includes(view))
+  if (financeViews.includes(view)) setSidebarGroup('finance', true, false)
   const meta = {
     home: ['Início', 'AMBIENTE PESSOAL'],
     jarvis: ['Jarvis', 'ASSISTENTE PESSOAL'],
@@ -367,10 +414,9 @@ function navigate(view) {
   }[view] || ['Jarvis', 'AMBIENTE PESSOAL']
   $('pageTitle').textContent = meta[0]
   $('pageEyebrow').textContent = meta[1]
-  const financeViews = ['overview','transactions','purchases','investments','import','accounts']
   setHidden($('financeTopActions'), !financeViews.includes(view))
   setHidden($('personalTopActions'), financeViews.includes(view))
-  setHidden($('jarvisDockBtn'), view === 'jarvis')
+  setHidden($('jarvisDockBtn'), ['home','jarvis'].includes(view))
   toggleSidebar(false)
   renderMain()
 }
@@ -443,8 +489,12 @@ function updateUserChrome() {
   $('userName').textContent = name
   $('userAvatar').textContent = name[0]?.toUpperCase() || 'U'
   const review = state.transactions.filter((t) => t.review_status === 'needs_review').length
-  $('reviewBadge').textContent = review
-  setHidden($('reviewBadge'), !review)
+  ;['reviewBadge', 'financeReviewBadge'].forEach((id) => {
+    const badge = $(id)
+    if (!badge) return
+    badge.textContent = review
+    setHidden(badge, !review)
+  })
 }
 
 function visibleTransactions() {
