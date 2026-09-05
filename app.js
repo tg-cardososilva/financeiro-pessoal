@@ -97,34 +97,6 @@ function personalDisplayName() {
   return local.replace(/[._-]+/g, ' ').trim().split(/\s+/)[0] || 'Voce'
 }
 
-const JARVIS_TEST_CLEANUP_KEY = 'jarvis_v32_test_cleanup_20260905'
-const JARVIS_TEST_WINDOW_START = '2026-09-05T00:00:00Z'
-const JARVIS_TEST_WINDOW_END = '2026-09-06T00:00:00Z'
-
-function isJarvisTestAction(a) {
-  return a?.action_type === 'calendar_create' && a?.payload?.title === 'Reunião com Carlos' && String(a?.payload?.starts_at || '').startsWith('2026-09-11T14:00:00')
-}
-function isJarvisTestTask(t) { return String(t?.title || '').trim() === 'Mandar o contrato para o contador' }
-function isJarvisTestNote(n) { return /^Erros de empresários ao misturar contas pessoais e da empresa/i.test(String(n?.title || '')) }
-function isJarvisTestAnnotation(a) {
-  const hay = `${a?.merchant || ''} ${a?.description || ''} ${a?.note || ''} ${a?.notes || ''}`.toLowerCase()
-  return Math.abs(num(a?.amount)) === 42.5 && hay.includes('edna')
-}
-function isJarvisTestMessage(m) {
-  const b = String(m?.body || m?.transcript || '')
-  return [
-    'Jarvis, gastei R$ 42,50 na Edna no débito do Inter. Comprei pão, leite e refrigerante.',
-    'Registrei o gasto de R$ 42,50 na Edna, pago no débito do Inter, referente a pão, leite e refrigerante.',
-    'Entendi como financeiro: R$ 42,50. A interpretacao completa sera refinada pela IA.',
-    'Jarvis, anota uma ideia de vídeo sobre os erros que empresários cometem misturando conta pessoal e da empresa.',
-    'Anotei a ideia de vídeo sobre os erros que empresários cometem ao misturar a conta pessoal com a da empresa.',
-    'Jarvis, me lembra amanhã às 9h de mandar o contrato para o contador.',
-    'Vou te lembrar amanhã, 6 de setembro, às 9h, de mandar o contrato para o contador.',
-    'Jarvis, agenda uma reunião com Carlos sexta-feira às 14h por uma hora.',
-    'Posso agendar a reunião com Carlos para sexta-feira, 11 de setembro, das 14h às 15h?'
-  ].includes(b)
-}
-
 function jarvisActionFingerprint(a) {
   if (!a) return ''
   if (a.action_type === 'calendar_create') return ['calendar_create', a.payload?.title || '', a.payload?.starts_at || '', a.payload?.ends_at || ''].join('|').toLowerCase()
@@ -153,32 +125,6 @@ function dedupeJarvisAnnotations(items = []) {
   return out
 }
 
-async function cleanupKnownJarvisTestData() {
-  if (!state.session?.user?.id || localStorage.getItem(JARVIS_TEST_CLEANUP_KEY) === 'done') return
-  const uid = state.session.user.id
-  const attempts = []
-  const run = async (label, promise) => {
-    try { const { error } = await promise; if (error) throw error; attempts.push([label, true]) }
-    catch (err) { console.warn(`Jarvis test cleanup: ${label}`, err); attempts.push([label, false]) }
-  }
-  await run('actions', supabase.from('jarvis_actions').delete().eq('user_id', uid).eq('action_type', 'calendar_create').gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END).contains('payload', { title: 'Reunião com Carlos' }))
-  await run('tasks', supabase.from('jarvis_tasks').delete().eq('user_id', uid).eq('title', 'Mandar o contrato para o contador').gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END))
-  await run('notes', supabase.from('jarvis_notes').delete().eq('user_id', uid).ilike('title', 'Erros de empresários ao misturar contas pessoais e da empresa%').gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END))
-  await run('annotations', supabase.from('financial_annotations').delete().eq('user_id', uid).eq('amount', 42.5).ilike('merchant', '%Edna%').gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END))
-  const bodies = [
-    'Jarvis, gastei R$ 42,50 na Edna no débito do Inter. Comprei pão, leite e refrigerante.',
-    'Registrei o gasto de R$ 42,50 na Edna, pago no débito do Inter, referente a pão, leite e refrigerante.',
-    'Entendi como financeiro: R$ 42,50. A interpretacao completa sera refinada pela IA.',
-    'Jarvis, anota uma ideia de vídeo sobre os erros que empresários cometem misturando conta pessoal e da empresa.',
-    'Anotei a ideia de vídeo sobre os erros que empresários cometem ao misturar a conta pessoal com a da empresa.',
-    'Jarvis, me lembra amanhã às 9h de mandar o contrato para o contador.',
-    'Vou te lembrar amanhã, 6 de setembro, às 9h, de mandar o contrato para o contador.',
-    'Jarvis, agenda uma reunião com Carlos sexta-feira às 14h por uma hora.',
-    'Posso agendar a reunião com Carlos para sexta-feira, 11 de setembro, das 14h às 15h?'
-  ]
-  await run('messages', supabase.from('jarvis_messages').delete().eq('user_id', uid).in('body', bodies).gte('created_at', JARVIS_TEST_WINDOW_START).lt('created_at', JARVIS_TEST_WINDOW_END))
-  if (attempts.some(([,ok]) => ok)) localStorage.setItem(JARVIS_TEST_CLEANUP_KEY, 'done')
-}
 function monthRange() {
   const [y, m] = state.month.split('-').map(Number)
   const start = `${state.month}-01`
@@ -2331,17 +2277,16 @@ async function loadJarvisData(force = false) {
     ])
     const err = messages.error || annotations.error || notes.error || tasks.error || projects.error || actions.error || connections.error
     if (err) throw err
-    state.jarvis.messages = (messages.data || []).filter((x) => !isJarvisTestMessage(x)).reverse()
-    state.jarvis.annotations = dedupeJarvisAnnotations((annotations.data || []).filter((x) => !isJarvisTestAnnotation(x)))
-    state.jarvis.notes = (notes.data || []).filter((x) => !isJarvisTestNote(x))
-    state.jarvis.tasks = (tasks.data || []).filter((x) => !isJarvisTestTask(x))
+    state.jarvis.messages = (messages.data || []).reverse()
+    state.jarvis.annotations = dedupeJarvisAnnotations(annotations.data || [])
+    state.jarvis.notes = notes.data || []
+    state.jarvis.tasks = tasks.data || []
     state.jarvis.projects = projects.data || []
-    state.jarvis.actions = dedupeJarvisActions((actions.data || []).filter((x) => !isJarvisTestAction(x)))
+    state.jarvis.actions = dedupeJarvisActions(actions.data || [])
     state.jarvis.counts = { annotations: annotations.count ?? state.jarvis.annotations.length, notes: notes.count ?? state.jarvis.notes.length, tasks: tasks.count ?? state.jarvis.tasks.length, projects: projects.count ?? state.jarvis.projects.length, actions: actions.count ?? state.jarvis.actions.length }
     state.jarvis.connections = connections.data || []
     state.jarvis.error = null
     state.jarvis.loaded = true
-    cleanupKnownJarvisTestData().catch((err) => console.warn('Jarvis test cleanup', err))
   } catch (err) {
     state.jarvis.error = humanError(err)
     state.jarvis.loaded = true

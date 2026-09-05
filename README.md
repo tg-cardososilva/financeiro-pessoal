@@ -1,4 +1,4 @@
-# Jarvis v3.2.1 - sidebar limpa
+# Jarvis v3.2.2 - limpeza arquitetural
 
 Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
 
@@ -20,3 +20,10 @@ Nao crie pasta `assets`.
 - A saudacao do perfil atual agora prioriza `Thiago` antes do nome salvo no perfil, evitando exibir `tgcs.business`.
 
 Depois de publicar, use `Command + Shift + R`.
+
+## v3.2.2
+
+- Remove a rotina temporária que reconhecia, escondia e apagava dados de teste do Jarvis.
+- `loadJarvisData()` volta a ser somente leitura.
+- Mantém deduplicação genérica de ações e anotações para proteção visual.
+- Regra arquitetural: abrir ou atualizar uma tela nunca apaga dados automaticamente.
