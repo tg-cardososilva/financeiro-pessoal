@@ -374,6 +374,7 @@ function navigate(view) {
 async function loadData() {
   if (!state.session || state.loading) return
   state.loading = true
+  state.attention.loaded = false
   showError('')
   renderMain()
   try {
@@ -441,6 +442,7 @@ async function loadAttentionData(force = false) {
   try {
     const { data, error } = await supabase.from('transactions')
       .select('id,transaction_date,display_description,description,merchant,amount,review_status,created_at')
+      .eq('user_id', state.session.user.id)
       .eq('review_status', 'needs_review')
       .order('transaction_date', { ascending: true })
       .order('created_at', { ascending: true })
