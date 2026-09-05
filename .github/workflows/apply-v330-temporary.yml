@@ -17,6 +17,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: v3.3.0-agenda-real
+      - name: Tighten guarded patch target
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/v330_patch.py')
+          text=p.read_text()
+          old='''app = replace_once(\n    app,\n    "    await loadJarvisData(true)\\n",\n    "    await Promise.all([loadJarvisData(true), loadCalendarData(true)])\\n",\n    'calendar refresh after confirmed action',\n)\n'''
+          new='''action_start = app.find("async function executeJarvisCalendarAction(actionId) {")\naction_end = app.find("async function testJarvisWhatsApp()", action_start)\nif action_start < 0 or action_end < 0:\n    raise SystemExit('calendar action boundaries not found')\naction_block = app[action_start:action_end]\nif action_block.count("    await loadJarvisData(true)\\n") != 1:\n    raise SystemExit('calendar action refresh target is not unique')\naction_block = action_block.replace("    await loadJarvisData(true)\\n", "    await Promise.all([loadJarvisData(true), loadCalendarData(true)])\\n", 1)\napp = app[:action_start] + action_block + app[action_end:]\n'''
+          if text.count(old) != 1:
+              raise SystemExit('guard patch block not found exactly once')
+          p.write_text(text.replace(old,new,1))
+          PY
       - name: Apply guarded patch
         run: python3 scripts/v330_patch.py
       - name: Validate JavaScript syntax
@@ -36,6 +48,8 @@ jobs:
           assert "supabase.functions.invoke('jarvis-calendar-read'" in block
           assert 'scheduledCalendarActions' not in text
           assert 'Jarvis · aguardando confirmação' in text
+          assert "shouldUseCalendarRead" in text
+          assert "jarvis-calendar-query" in text
           print('calendar read path validated')
           PY
       - name: Commit v3.3.0 branch changes
