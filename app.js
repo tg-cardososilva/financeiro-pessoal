@@ -59,7 +59,7 @@ const state = {
   investmentSnapshots: [],
   transactionDrilldown: null,
   investmentMovementFilter: 'all',
-  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], loading: false, loaded: false, engine: null, error: null }
+  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], loading: false, loaded: false, engine: null, error: null }
 }
 
 function esc(v = '') {
@@ -143,6 +143,13 @@ async function boot() {
     })
     window.__financeiroBooted = true
     renderSession()
+    const oauthParams = new URLSearchParams(location.search)
+    if (oauthParams.has('jarvis_google') && state.session) {
+      const result = oauthParams.get('jarvis_google')
+      history.replaceState({}, '', location.pathname + location.hash)
+      state.jarvis.loaded = false
+      setTimeout(() => { navigate('jarvis'); toast(result === 'connected' ? 'Google Calendar conectado ao Jarvis.' : result === 'cancelled' ? 'Conexão com Google cancelada.' : 'Não foi possível conectar o Google Calendar.', result === 'connected' ? 'success' : 'error') }, 120)
+    }
   } catch (err) {
     console.error('Falha ao iniciar Financeiro:', err)
     showBootFailure(err)
@@ -2143,15 +2150,16 @@ async function loadJarvisData(force = false) {
   state.jarvis.loading = true
   if (state.view === 'jarvis') renderJarvis()
   try {
-    const [messages, annotations, notes, tasks, projects, actions] = await Promise.all([
+    const [messages, annotations, notes, tasks, projects, actions, connections] = await Promise.all([
       supabase.from('jarvis_messages').select('*').order('created_at', { ascending: false }).limit(40),
       supabase.from('financial_annotations').select('*').order('created_at', { ascending: false }).limit(12),
       supabase.from('jarvis_notes').select('*').order('created_at', { ascending: false }).limit(12),
       supabase.from('jarvis_tasks').select('*').order('created_at', { ascending: false }).limit(12),
       supabase.from('jarvis_projects').select('*').order('created_at', { ascending: false }).limit(12),
-      supabase.from('jarvis_actions').select('*').order('created_at', { ascending: false }).limit(12)
+      supabase.from('jarvis_actions').select('*').order('created_at', { ascending: false }).limit(12),
+      supabase.from('jarvis_connections').select('*').order('updated_at', { ascending: false }).limit(12)
     ])
-    const err = messages.error || annotations.error || notes.error || tasks.error || projects.error || actions.error
+    const err = messages.error || annotations.error || notes.error || tasks.error || projects.error || actions.error || connections.error
     if (err) throw err
     state.jarvis.messages = (messages.data || []).reverse()
     state.jarvis.annotations = annotations.data || []
@@ -2159,6 +2167,7 @@ async function loadJarvisData(force = false) {
     state.jarvis.tasks = tasks.data || []
     state.jarvis.projects = projects.data || []
     state.jarvis.actions = actions.data || []
+    state.jarvis.connections = connections.data || []
     state.jarvis.error = null
     state.jarvis.loaded = true
   } catch (err) {
@@ -2187,6 +2196,49 @@ function jarvisCreatedSummary() {
   ]
 }
 
+function jarvisGoogleConnection() {
+  return state.jarvis.connections.find((x) => x.provider === 'google_calendar' && x.status === 'connected') || null
+}
+
+function formatJarvisEvent(payload = {}) {
+  const start = payload.starts_at ? new Date(payload.starts_at) : null
+  const end = payload.ends_at ? new Date(payload.ends_at) : null
+  const date = start ? new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).format(start) : 'Data pendente'
+  const time = start ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(start) : '--:--'
+  const endTime = end ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(end) : null
+  return `${date} · ${time}${endTime ? `–${endTime}` : ''}`
+}
+
+async function connectJarvisGoogleCalendar() {
+  const btn = $('jarvisGoogleConnect')
+  setBusy(btn, true, 'Abrindo Google')
+  try {
+    const { data, error } = await supabase.functions.invoke('jarvis-google-oauth', { body: {} })
+    if (error) throw error
+    if (data?.error) throw new Error(data.error)
+    if (!data?.authorization_url) throw new Error('O Google não retornou a tela de autorização.')
+    location.href = data.authorization_url
+  } catch (err) {
+    toast(humanError(err), 'error')
+    setBusy(btn, false)
+  }
+}
+
+async function executeJarvisCalendarAction(actionId) {
+  const btn = document.querySelector(`[data-jarvis-calendar-action="${actionId}"]`)
+  setBusy(btn, true, 'Agendando')
+  try {
+    const { data, error } = await supabase.functions.invoke('jarvis-calendar', { body: { action_id: actionId } })
+    if (error) throw error
+    if (data?.error) throw new Error(data.error)
+    toast('Evento criado no Google Calendar.', 'success')
+    await loadJarvisData(true)
+  } catch (err) {
+    toast(humanError(err), 'error')
+    setBusy(btn, false)
+  }
+}
+
 function renderJarvis() {
   if (!state.jarvis.loaded && !state.jarvis.loading) {
     $('mainArea').innerHTML = `<div class="content-stack"><div class="skeleton-block h90"></div><div class="skeleton-block h340"></div></div>`
@@ -2198,6 +2250,8 @@ function renderJarvis() {
   const statusLabel = hasOpenAI ? 'IA conectada' : 'Modo local de teste'
   const statusClass = hasOpenAI ? 'online' : 'local'
   const cards = jarvisCreatedSummary()
+  const google = jarvisGoogleConnection()
+  const calendarActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && ['proposed','failed'].includes(x.status))
   const loadError = state.jarvis.error ? `<div class="error-banner jarvis-load-error" role="alert"><span>${esc(state.jarvis.error)}</span><button id="jarvisRetryLoad" type="button">Tentar novamente</button></div>` : ''
   $('mainArea').innerHTML = `<div class="content-stack jarvis-view">
     ${loadError}
@@ -2224,6 +2278,11 @@ function renderJarvis() {
         <div id="jarvisMessage" class="form-message hidden"></div>
       </div>
       <aside class="jarvis-side">
+        <section class="panel jarvis-integration">
+          <div class="panel-head"><div><h2>Google Calendar</h2><p>${google ? 'Agenda conectada ao Jarvis.' : 'Conecte sua agenda para executar eventos confirmados.'}</p></div></div>
+          <div class="jarvis-connection ${google ? 'connected' : ''}"><span class="jarvis-connection-icon">31</span><div><strong>${google ? 'Conectado' : 'Não conectado'}</strong><small>${google ? esc(google.display_name || 'Google Calendar') : 'Autorização OAuth segura'}</small></div>${google ? '<span class="connection-ok">✓</span>' : '<button id="jarvisGoogleConnect" class="button small" type="button">Conectar</button>'}</div>
+          ${calendarActions.length ? `<div class="jarvis-calendar-actions"><span class="eyebrow">AGUARDANDO SUA CONFIRMAÇÃO</span>${calendarActions.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" type="button" data-jarvis-calendar-action="${esc(a.id)}" ${google ? '' : 'disabled'}>Confirmar e agendar</button></article>`).join('')}</div>` : ''}
+        </section>
         <section class="panel"><div class="panel-head"><div><h2>O que o Jarvis guardou</h2><p>Estruturas criadas pelas suas mensagens.</p></div></div><div class="jarvis-metric-list">${cards.map(([label,value,sub]) => `<div><span>${esc(label)}</span><strong>${value}</strong><small>${esc(sub)}</small></div>`).join('')}</div></section>
         <section class="panel jarvis-rules"><span class="eyebrow">REGRAS DE SEGURANCA</span><h3>Contexto primeiro. Acao depois.</h3><p>Gastos e notas podem ser registrados sem confirmacao. Agenda e outras acoes externas ficam como proposta ate voce aprovar.</p><div><span>Financeiro</span><b>Memoria para conciliar</b></div><div><span>Agenda</span><b>Confirmacao obrigatoria</b></div><div><span>Usuario</span><b>Isolado por login</b></div></section>
       </aside>
@@ -2231,6 +2290,8 @@ function renderJarvis() {
   </div>`
   $('jarvisRetryLoad')?.addEventListener('click', () => { state.jarvis.loaded = false; state.jarvis.error = null; loadJarvisData(true) })
   $('jarvisRefresh')?.addEventListener('click', () => loadJarvisData(true))
+  $('jarvisGoogleConnect')?.addEventListener('click', connectJarvisGoogleCalendar)
+  document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
   document.querySelectorAll('[data-jarvis-prompt]').forEach((b) => b.addEventListener('click', () => { $('jarvisInput').value = b.dataset.jarvisPrompt; $('jarvisInput').focus() }))
   $('jarvisForm')?.addEventListener('submit', sendJarvisMessage)
   requestAnimationFrame(() => { const chat = $('jarvisChat'); if (chat) chat.scrollTop = chat.scrollHeight })

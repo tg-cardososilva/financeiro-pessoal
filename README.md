@@ -46,3 +46,11 @@ Substitua no GitHub Pages:
 - Corrige acesso autenticado as tabelas do Jarvis no Supabase.
 - Evita loop de carregamento caso o Jarvis encontre erro.
 - Corrige estouro horizontal em Chrome a 100% e antecipa o reflow do dashboard em telas desktop menores.
+
+
+## v2.3.2 - Google Calendar
+- Jarvis Lab mostra status da conexão Google Calendar.
+- Botão Conectar inicia OAuth pelo Edge Function jarvis-google-oauth.
+- Retorno do Google leva de volta automaticamente ao Jarvis Lab.
+- Propostas de agenda pendentes aparecem para confirmação.
+- Botão Confirmar e agendar executa jarvis-calendar e cria o evento real somente após aprovação.
