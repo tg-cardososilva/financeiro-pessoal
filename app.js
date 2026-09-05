@@ -2239,6 +2239,45 @@ async function executeJarvisCalendarAction(actionId) {
   }
 }
 
+async function testJarvisWhatsApp() {
+  const btn = $('jarvisWhatsAppTest')
+  const numberInput = $('jarvisWhatsAppNumber')
+  const resultBox = $('jarvisWhatsAppResult')
+  const to = String(numberInput?.value || '').replace(/\D/g, '')
+  if (!to) {
+    if (resultBox) { resultBox.className = 'form-message error'; resultBox.textContent = 'Digite o numero com DDI e DDD. Ex.: 5521999999999.' }
+    numberInput?.focus()
+    return
+  }
+  localStorage.setItem('jarvis_whatsapp_test_number', to)
+  if (resultBox) { resultBox.className = 'form-message hidden'; resultBox.textContent = '' }
+  setBusy(btn, true, 'Enviando')
+  try {
+    const { data, error } = await supabase.functions.invoke('jarvis-whatsapp-send', {
+      body: { to, use_template: true }
+    })
+    if (error) {
+      let details = null
+      try { details = await error.context?.json?.() } catch (_) {}
+      if (details) throw new Error([details.error, details.error_code ? `codigo ${details.error_code}` : '', details.error_subcode ? `subcodigo ${details.error_subcode}` : ''].filter(Boolean).join(' · '))
+      throw error
+    }
+    if (data?.error || data?.ok === false) throw new Error([data?.error || 'Falha no envio', data?.error_code ? `codigo ${data.error_code}` : '', data?.error_subcode ? `subcodigo ${data.error_subcode}` : ''].filter(Boolean).join(' · '))
+    const messageId = data?.result?.messages?.[0]?.id || null
+    if (resultBox) {
+      resultBox.className = 'form-message success'
+      resultBox.textContent = messageId ? `Meta aceitou o envio. Message ID: ${messageId}` : 'Meta aceitou o envio do teste.'
+    }
+    toast('Teste enviado diretamente pela WhatsApp Cloud API.', 'success')
+  } catch (err) {
+    const msg = humanError(err)
+    if (resultBox) { resultBox.className = 'form-message error'; resultBox.textContent = msg }
+    toast(msg, 'error')
+  } finally {
+    setBusy(btn, false)
+  }
+}
+
 function renderJarvis() {
   if (!state.jarvis.loaded && !state.jarvis.loading) {
     $('mainArea').innerHTML = `<div class="content-stack"><div class="skeleton-block h90"></div><div class="skeleton-block h340"></div></div>`
@@ -2283,6 +2322,16 @@ function renderJarvis() {
           <div class="jarvis-connection ${google ? 'connected' : ''}"><span class="jarvis-connection-icon">31</span><div><strong>${google ? 'Conectado' : 'Não conectado'}</strong><small>${google ? esc(google.display_name || 'Google Calendar') : 'Autorização OAuth segura'}</small></div>${google ? '<span class="connection-ok">✓</span>' : '<button id="jarvisGoogleConnect" class="button small" type="button">Conectar</button>'}</div>
           ${calendarActions.length ? `<div class="jarvis-calendar-actions"><span class="eyebrow">AGUARDANDO SUA CONFIRMAÇÃO</span>${calendarActions.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" type="button" data-jarvis-calendar-action="${esc(a.id)}" ${google ? '' : 'disabled'}>Confirmar e agendar</button></article>`).join('')}</div>` : ''}
         </section>
+        <section class="panel jarvis-integration jarvis-whatsapp-test">
+          <div class="panel-head"><div><h2>WhatsApp Cloud API</h2><p>Teste direto pelo Supabase, sem usar o botao de envio da Meta.</p></div></div>
+          <div class="jarvis-connection"><span class="jarvis-connection-icon">WA</span><div><strong>Diagnostico ativo</strong><small>Usa os secrets protegidos no Supabase</small></div><span class="connection-ok">✓</span></div>
+          <label class="field-label">Numero de destino
+            <input id="jarvisWhatsAppNumber" type="tel" inputmode="numeric" placeholder="5521999999999" autocomplete="tel">
+          </label>
+          <button id="jarvisWhatsAppTest" class="button primary full" type="button">Testar WhatsApp</button>
+          <div id="jarvisWhatsAppResult" class="form-message hidden" aria-live="polite"></div>
+          <small class="jarvis-test-note">O teste usa o template oficial <b>hello_world</b>. Digite DDI + DDD + numero, somente numeros.</small>
+        </section>
         <section class="panel"><div class="panel-head"><div><h2>O que o Jarvis guardou</h2><p>Estruturas criadas pelas suas mensagens.</p></div></div><div class="jarvis-metric-list">${cards.map(([label,value,sub]) => `<div><span>${esc(label)}</span><strong>${value}</strong><small>${esc(sub)}</small></div>`).join('')}</div></section>
         <section class="panel jarvis-rules"><span class="eyebrow">REGRAS DE SEGURANCA</span><h3>Contexto primeiro. Acao depois.</h3><p>Gastos e notas podem ser registrados sem confirmacao. Agenda e outras acoes externas ficam como proposta ate voce aprovar.</p><div><span>Financeiro</span><b>Memoria para conciliar</b></div><div><span>Agenda</span><b>Confirmacao obrigatoria</b></div><div><span>Usuario</span><b>Isolado por login</b></div></section>
       </aside>
@@ -2291,6 +2340,9 @@ function renderJarvis() {
   $('jarvisRetryLoad')?.addEventListener('click', () => { state.jarvis.loaded = false; state.jarvis.error = null; loadJarvisData(true) })
   $('jarvisRefresh')?.addEventListener('click', () => loadJarvisData(true))
   $('jarvisGoogleConnect')?.addEventListener('click', connectJarvisGoogleCalendar)
+  const waNumber = $('jarvisWhatsAppNumber')
+  if (waNumber) waNumber.value = localStorage.getItem('jarvis_whatsapp_test_number') || ''
+  $('jarvisWhatsAppTest')?.addEventListener('click', testJarvisWhatsApp)
   document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
   document.querySelectorAll('[data-jarvis-prompt]').forEach((b) => b.addEventListener('click', () => { $('jarvisInput').value = b.dataset.jarvisPrompt; $('jarvisInput').focus() }))
   $('jarvisForm')?.addEventListener('submit', sendJarvisMessage)
