@@ -1,3 +1,5 @@
+import { buildAttentionItems, attentionSummary, ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=3.3.1'
+
 const SUPABASE_URL = 'https://qhpkraqrcvhhtbqjhkmm.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_OXgobfJOCgDy4OP2n_zKgg_tOvEa28F'
 let supabase = null
@@ -60,7 +62,8 @@ const state = {
   transactionDrilldown: null,
   investmentMovementFilter: 'all',
   jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], counts: { annotations: 0, notes: 0, tasks: 0, projects: 0, actions: 0 }, loading: false, loaded: false, engine: null, error: null },
-  calendar: { events: [], loading: false, loaded: false, error: null, connected: null, syncedAt: null, displayName: null }
+  calendar: { events: [], loading: false, loaded: false, error: null, connected: null, syncedAt: null, displayName: null },
+  attention: { reviewTransactions: [], loading: false, loaded: false, error: null }
 }
 
 function esc(v = '') {
@@ -427,6 +430,31 @@ async function loadData() {
   } finally {
     state.loading = false
     renderMain()
+  }
+}
+
+async function loadAttentionData(force = false) {
+  if (!state.session || state.attention.loading || (state.attention.loaded && !force)) return
+  state.attention.loading = true
+  state.attention.error = null
+  if (state.view === 'home') renderMain()
+  try {
+    const { data, error } = await supabase.from('transactions')
+      .select('id,transaction_date,display_description,description,merchant,amount,review_status,created_at')
+      .eq('review_status', 'needs_review')
+      .order('transaction_date', { ascending: true })
+      .order('created_at', { ascending: true })
+      .limit(500)
+    if (error) throw error
+    state.attention.reviewTransactions = data || []
+    state.attention.loaded = true
+  } catch (err) {
+    state.attention.reviewTransactions = []
+    state.attention.error = humanError(err)
+    state.attention.loaded = true
+  } finally {
+    state.attention.loading = false
+    if (state.view === 'home') renderMain()
   }
 }
 
@@ -961,7 +989,7 @@ function openTransactionModal(id) {
       }
       close()
       toast(isCustomCategory && $('customApplySimilar')?.checked ? 'Categoria criada e aplicada aos lançamentos semelhantes.' : isCustomCategory ? 'Categoria criada apenas para este lançamento.' : 'Transação atualizada.', 'success')
-      await loadData()
+      await Promise.all([loadData(), loadAttentionData(true)])
     } catch (err) {
       showInfo('txEditMessage', humanError(err))
       setBusy(btn, false)
@@ -2635,13 +2663,11 @@ function homeAgendaGroup(title, events, emptyText) {
 function renderHome() {
   if (!state.jarvis.loaded && !state.jarvis.loading) loadJarvisData()
   if (state.jarvis.loaded && !state.calendar.loaded && !state.calendar.loading) loadCalendarData()
+  if (!state.attention.loaded && !state.attention.loading) loadAttentionData()
   const name = personalDisplayName()
   const now = new Date()
   const localHour = Number(new Intl.DateTimeFormat('en-US',{timeZone:JARVIS_TIMEZONE,hour:'2-digit',hourCycle:'h23'}).format(now))
   const greeting = localHour < 12 ? 'Bom dia' : localHour < 18 ? 'Boa tarde' : 'Boa noite'
-  const pendingTasks = state.jarvis.tasks.filter((x) => x.status === 'pending').sort((a,b) => new Date(jarvisTaskTime(a) || '2999-01-01') - new Date(jarvisTaskTime(b) || '2999-01-01'))
-  const todayTasks = pendingTasks.filter((x) => isSameLocalDay(jarvisTaskTime(x)))
-  const overdueTasks = pendingTasks.filter((x) => jarvisTaskTime(x) && new Date(jarvisTaskTime(x)) < now && !isSameLocalDay(jarvisTaskTime(x)))
   const proposedActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && x.status === 'proposed')
   const calendarGroups = groupCalendarEvents(state.calendar.events)
   const todayEvents = calendarGroups.today
@@ -2653,21 +2679,26 @@ function renderHome() {
   const reviewCount = state.transactions.filter((t) => t.review_status === 'needs_review').length
   const cashBalance = state.accounts.filter((a) => !['credit_card','virtual'].includes(a.account_type)).reduce((sum,a) => sum + (accountBalanceLabel(a).value || 0), 0)
   const google = jarvisGoogleConnection()
-  const pendingAnnotations = state.jarvis.annotations.filter((x) => x.reconciliation_status === 'pending').length
-  const attention = []
-  if (proposedActions.length) attention.push(`${proposedActions.length} ação${proposedActions.length > 1 ? 'ões' : ''} aguardando confirmação`)
-  if (overdueTasks.length) attention.push(`${overdueTasks.length} tarefa${overdueTasks.length > 1 ? 's' : ''} atrasada${overdueTasks.length > 1 ? 's' : ''}`)
-  if (todayTasks.length) attention.push(`${todayTasks.length} lembrete${todayTasks.length > 1 ? 's' : ''} para hoje`)
-  if (reviewCount) attention.push(`${reviewCount} transaç${reviewCount > 1 ? 'ões' : 'ão'} financeira${reviewCount > 1 ? 's' : ''} para revisar`)
-  if (pendingAnnotations) attention.push(`${pendingAnnotations} contexto${pendingAnnotations > 1 ? 's' : ''} do Jarvis para conciliar`)
-  if (state.calendar.error) attention.push('Google Calendar precisa de atenção')
-  if (!attention.length) attention.push('Nenhuma pendência crítica detectada agora')
-  const focusParts = []
-  if (todayEvents.length) focusParts.push(`${todayEvents.length} compromisso${todayEvents.length > 1 ? 's' : ''} hoje`)
-  if (todayTasks.length) focusParts.push(`${todayTasks.length} lembrete${todayTasks.length > 1 ? 's' : ''}`)
-  if (proposedActions.length) focusParts.push(`${proposedActions.length} confirmação${proposedActions.length > 1 ? 'ões' : ''} pendente${proposedActions.length > 1 ? 's' : ''}`)
-  if (reviewCount) focusParts.push(`${reviewCount} lançamento${reviewCount > 1 ? 's' : ''} para revisar`)
-  const focusSummary = focusParts.length ? `Hoje merece atenção em ${focusParts.join(', ')}.` : 'Seu ambiente está em ordem. Nenhuma pendência importante detectada agora.'
+  const attentionItems = buildAttentionItems({
+    tasks: state.jarvis.tasks,
+    actions: state.jarvis.actions,
+    reviewTransactions: state.attention.reviewTransactions,
+    annotations: state.jarvis.annotations,
+    calendarEvents: state.calendar.events,
+    connections: state.jarvis.connections,
+    calendarError: state.calendar.error,
+    now,
+    timezone: JARVIS_TIMEZONE,
+  })
+  const focusSummary = attentionSummary(attentionItems)
+  const attentionBody = state.attention.loading && !state.attention.loaded
+    ? '<div class="attention-empty"><span class="spinner"></span><p><strong>Consolidando sinais reais...</strong><small>Verificando pendências financeiras.</small></p></div>'
+    : attentionItems.length
+      ? `<div class="attention-list">${attentionItems.slice(0,6).map((entry) => `<button type="button" class="attention-item urgency-${esc(entry.urgency)}" data-personal-nav="${esc(entry.navigate)}"><span class="attention-signal"></span><p><strong>${esc(entry.title)}</strong><small>${esc(entry.detail)}</small></p><b class="attention-urgency">${esc(ATTENTION_URGENCY_LABELS[entry.urgency] || 'Média')}</b></button>`).join('')}</div>`
+      : '<div class="attention-empty attention-clear"><span>✓</span><p><strong>Nada exige ação agora.</strong><small>Nenhum sinal real ultrapassou os critérios de atenção.</small></p></div>'
+  const attentionWarning = state.attention.error
+    ? `<div class="attention-data-warning">Não consegui verificar todas as transações para revisão: ${esc(state.attention.error)}</div>`
+    : ''
   const calendarBody = !google
     ? '<div class="calendar-state-card"><strong>Google Calendar não conectado.</strong><span>Conecte sua agenda para trazer compromissos reais para a Home.</span></div>'
     : state.calendar.loading && !state.calendar.loaded
@@ -2694,7 +2725,8 @@ function renderHome() {
 
       <article class="home-focus-card attention-card">
         <div class="home-card-head"><div><span class="eyebrow">JARVIS</span><h3>Requer atenção</h3></div><button data-personal-nav="jarvis" type="button">Abrir →</button></div>
-        <div class="attention-list">${attention.slice(0,4).map((x,i) => `<div><span>${i+1}</span><p>${esc(x)}</p></div>`).join('')}</div>
+        ${attentionBody}
+        ${attentionWarning}
       </article>
     </section>
 
@@ -2731,7 +2763,7 @@ function renderHome() {
     const btn = $('homeRefresh')
     setBusy(btn, true, 'Atualizando')
     try {
-      await Promise.all([loadData(), loadJarvisData(true), loadCalendarData(true)])
+      await Promise.all([loadData(), loadJarvisData(true), loadCalendarData(true), loadAttentionData(true)])
       toast(state.calendar.error ? 'Home atualizada. O Calendar segue indisponível.' : 'Home atualizada.', state.calendar.error ? 'error' : 'success')
     } finally { setBusy(btn, false) }
   })

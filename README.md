@@ -1,9 +1,10 @@
-# Jarvis v3.3.0 - Home 360 com agenda real
+# Jarvis v3.3.1 - Requer atencao com dados reais
 
 Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
 
 - `index.html`
 - `app.js`
+- `attention-rules.js`
 - `styles.css`
 - `jarvis-avatar.png`
 
@@ -38,3 +39,13 @@ Depois de publicar, use `Command + Shift + R`.
 - A camada visual deduplica eventos por `id + start`.
 - Perguntas de agenda do Jarvis usam a mesma fonte `jarvis-calendar-read`; pedidos de escrita continuam no fluxo com confirmação.
 - Atualizar a Home não cria, altera, cancela ou apaga eventos.
+
+## v3.3.1
+
+- `Requer atenção` passa a ser derivado exclusivamente de dados reais já existentes.
+- Regras cobrem tarefas vencidas/próximas, ações propostas, transações para revisão, compromissos próximos, anotações financeiras pendentes e falhas de integração.
+- Itens recebem urgência `Urgente`, `Alta`, `Média` ou `Baixa` e são ordenados por score e prazo.
+- Transações e anotações repetitivas são consolidadas; registros individuais usam chaves estáveis para evitar duplicidade.
+- A busca global de transações para revisão é somente leitura e independente do mês selecionado.
+- Nenhum dado de teste persistente é criado. Os testes das regras usam apenas fixtures em memória.
+- A Home continua somente leitura.
