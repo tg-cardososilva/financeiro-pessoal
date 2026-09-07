@@ -1,4 +1,12 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.115.0'
+import {
+  DRIVE_FOLDER_MIME,
+  buildChildQuery,
+  driveQueryEscape,
+  driveRootConfig,
+  isFileInsideRoot,
+  walkDriveTree,
+} from './scope-core.js'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -45,6 +53,10 @@ function json(data, status = 200) {
   })
 }
 
+function appError(message, code, status = 400) {
+  return Object.assign(new Error(message), { code, status })
+}
+
 function normalizeText(value = '') {
   return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
 }
@@ -60,19 +72,18 @@ function safeOffset(value) {
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
 }
 
-function driveQueryEscape(value = '') {
-  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-}
-
-function technicalMetadata(file) {
-  const metadata = {}
+function technicalMetadata(file, scope = {}) {
+  const metadata = {
+    drive_scope_mode: 'root_folder_tree',
+    drive_root_folder_id: scope.root_id || null,
+    drive_parent_id: scope.parent_id || null,
+    drive_depth: Number.isFinite(scope.depth) ? scope.depth : null,
+  }
   if (file?.driveId) metadata.drive_id = file.driveId
-  if (file?.shortcutDetails?.targetId) metadata.shortcut_target_id = file.shortcutDetails.targetId
-  if (file?.shortcutDetails?.targetMimeType) metadata.shortcut_target_mime_type = file.shortcutDetails.targetMimeType
   return metadata
 }
 
-function normalizeRemoteFile(file, userId) {
+function normalizeRemoteFile(file, userId, scope = {}) {
   return {
     user_id: userId,
     provider: PROVIDER,
@@ -83,14 +94,14 @@ function normalizeRemoteFile(file, userId) {
     modified_at_provider: file.modifiedTime || null,
     size_bytes: file.size == null ? null : Number(file.size),
     source: 'imported',
-    metadata: technicalMetadata(file),
+    metadata: technicalMetadata(file, scope),
   }
 }
 
 function typeFilter(query, type) {
   if (!type || type === 'all') return query
   if (type === 'pdf') return query.eq('mime_type', 'application/pdf')
-  if (type === 'folder') return query.eq('mime_type', 'application/vnd.google-apps.folder')
+  if (type === 'folder') return query.eq('mime_type', DRIVE_FOLDER_MIME)
   if (type === 'image') return query.like('mime_type', 'image/%')
   if (type === 'document') return query.or('mime_type.eq.application/vnd.google-apps.document,mime_type.ilike.%wordprocessingml%,mime_type.like.text/%')
   if (type === 'spreadsheet') return query.or('mime_type.eq.application/vnd.google-apps.spreadsheet,mime_type.ilike.%spreadsheetml%,mime_type.eq.text/csv')
@@ -100,13 +111,13 @@ function typeFilter(query, type) {
 
 async function userContext(req) {
   const auth = req.headers.get('Authorization') || ''
-  if (!auth) throw Object.assign(new Error('Nao autenticado'), { status: 401, code: 'not_authenticated' })
+  if (!auth) throw appError('Nao autenticado', 'not_authenticated', 401)
   const userClient = createClient(SUPABASE_URL, getPublishableKey(), {
     global: { headers: { Authorization: auth } },
     auth: { persistSession: false, autoRefreshToken: false },
   })
   const { data, error } = await userClient.auth.getUser()
-  if (error || !data.user) throw Object.assign(new Error('Sessao invalida'), { status: 401, code: 'invalid_session' })
+  if (error || !data.user) throw appError('Sessao invalida', 'invalid_session', 401)
   return { userClient, user: data.user }
 }
 
@@ -120,10 +131,11 @@ async function driveConnection(userClient, userId) {
     .limit(1)
     .maybeSingle()
   if (error) throw error
-  if (!connection) throw Object.assign(new Error('Google Drive nao conectado'), { status: 409, code: 'drive_not_connected' })
+  if (!connection) throw appError('Google Drive nao conectado', 'drive_not_connected', 409)
   if (!Array.isArray(connection.scopes) || !connection.scopes.includes(DRIVE_SCOPE)) {
-    throw Object.assign(new Error('Escopo drive.metadata.readonly ausente'), { status: 409, code: 'drive_scope_missing' })
+    throw appError('Escopo drive.metadata.readonly ausente', 'drive_scope_missing', 409)
   }
+  driveRootConfig(connection)
   return connection
 }
 
@@ -134,12 +146,12 @@ async function accessTokenFor(userClient, userId) {
     .eq('connection_id', connection.id)
     .eq('user_id', userId)
     .maybeSingle()
-  if (error || !secret) throw Object.assign(new Error('Credenciais do Google Drive nao encontradas'), { status: 409, code: 'drive_credentials_missing' })
+  if (error || !secret) throw appError('Credenciais do Google Drive nao encontradas', 'drive_credentials_missing', 409)
 
   const expiresAt = secret.expires_at ? new Date(secret.expires_at).getTime() : 0
   if (secret.access_token && expiresAt > Date.now() + 120000) return { accessToken: secret.access_token, connection }
-  if (!secret.refresh_token) throw Object.assign(new Error('Refresh token do Google Drive ausente'), { status: 409, code: 'drive_refresh_token_missing' })
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) throw Object.assign(new Error('Google OAuth nao configurado'), { status: 503, code: 'google_oauth_not_configured' })
+  if (!secret.refresh_token) throw appError('Refresh token do Google Drive ausente', 'drive_refresh_token_missing', 409)
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) throw appError('Google OAuth nao configurado', 'google_oauth_not_configured', 503)
 
   const r = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -153,7 +165,7 @@ async function accessTokenFor(userClient, userId) {
   })
   const payload = await r.json().catch(() => ({}))
   if (!r.ok || !payload.access_token) {
-    throw Object.assign(new Error(payload?.error_description || payload?.error || 'Falha ao renovar token do Google Drive'), { status: 502, code: 'drive_refresh_failed' })
+    throw appError(payload?.error_description || payload?.error || 'Falha ao renovar token do Google Drive', 'drive_refresh_failed', 502)
   }
   const newExpiry = payload.expires_in ? new Date(Date.now() + Number(payload.expires_in) * 1000).toISOString() : null
   await admin.from('jarvis_connection_secrets').update({
@@ -166,17 +178,50 @@ async function accessTokenFor(userClient, userId) {
   return { accessToken: payload.access_token, connection }
 }
 
-async function googleList(accessToken, options = {}) {
-  const pageSize = safeLimit(options.page_size, 100, 1000)
-  const q = ["trashed = false"]
+async function googleGet(accessToken, fileId) {
+  const fields = 'id,name,mimeType,webViewLink,modifiedTime,size,parents,trashed,driveId,ownedByMe'
+  const params = new URLSearchParams({ fields, supportsAllDrives: 'false' })
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  const payload = await r.json().catch(() => ({}))
+  if (!r.ok) {
+    throw Object.assign(new Error(payload?.error?.message || `Google Drive ${r.status}`), {
+      status: r.status === 403 || r.status === 404 ? 409 : 502,
+      code: 'drive_get_failed',
+      google_status: r.status,
+    })
+  }
+  return payload
+}
+
+async function validateRootFolder(accessToken, connection) {
+  const root = driveRootConfig(connection)
+  let folder
+  try {
+    folder = await googleGet(accessToken, root.id)
+  } catch (error) {
+    throw appError('A pasta raiz JARVIS esta inacessivel. A sincronizacao foi interrompida sem usar o Drive inteiro como fallback.', 'drive_root_inaccessible', 409)
+  }
+  if (folder.trashed || String(folder.mimeType || '') !== DRIVE_FOLDER_MIME || folder.driveId || folder.ownedByMe === false) {
+    throw appError('A pasta raiz configurada nao e uma pasta valida do Meu Drive. Nenhum fallback foi usado.', 'drive_root_invalid', 409)
+  }
+  return { ...root, remote: folder }
+}
+
+async function googleListChildren(accessToken, parentId, options = {}) {
+  const pageSize = safeLimit(options.page_size, 1000, 1000)
+  const q = [buildChildQuery(parentId)]
   if (options.name_query) q.push(`name contains '${driveQueryEscape(options.name_query)}'`)
   if (options.mime_type) q.push(`mimeType = '${driveQueryEscape(options.mime_type)}'`)
   const params = new URLSearchParams({
     pageSize: String(pageSize),
     spaces: 'drive',
+    corpora: 'user',
+    includeItemsFromAllDrives: 'false',
     q: q.join(' and '),
     orderBy: 'modifiedTime desc',
-    fields: 'nextPageToken,files(id,name,mimeType,webViewLink,modifiedTime,size,driveId,shortcutDetails(targetId,targetMimeType))',
+    fields: 'nextPageToken,files(id,name,mimeType,webViewLink,modifiedTime,size,parents,trashed,driveId,ownedByMe)',
   })
   if (options.page_token) params.set('pageToken', String(options.page_token))
   const r = await fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`, {
@@ -185,25 +230,35 @@ async function googleList(accessToken, options = {}) {
   const payload = await r.json().catch(() => ({}))
   if (!r.ok) {
     const message = payload?.error?.message || `Google Drive ${r.status}`
-    throw Object.assign(new Error(message), { status: 502, code: 'drive_read_failed' })
+    throw appError(message, 'drive_read_failed', 502)
   }
   return { files: Array.isArray(payload.files) ? payload.files : [], next_page_token: payload.nextPageToken || null }
 }
 
-async function googleGet(accessToken, fileId) {
-  const fields = 'id,name,mimeType,webViewLink,modifiedTime,size,driveId,shortcutDetails(targetId,targetMimeType)'
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${encodeURIComponent(fields)}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  const payload = await r.json().catch(() => ({}))
-  if (!r.ok) throw Object.assign(new Error(payload?.error?.message || `Google Drive ${r.status}`), { status: 502, code: 'drive_get_failed' })
-  return payload
+async function requireFolderInsideRoot(accessToken, parentId, root) {
+  if (String(parentId) === root.id) return
+  const parent = await googleGet(accessToken, parentId)
+  if (parent.trashed || String(parent.mimeType || '') !== DRIVE_FOLDER_MIME) throw appError('Pasta fora do escopo JARVIS', 'drive_folder_outside_root', 404)
+  const inside = await isFileInsideRoot(parent, root.id, (id) => googleGet(accessToken, id))
+  if (!inside) throw appError('Pasta fora do escopo JARVIS', 'drive_folder_outside_root', 404)
 }
 
-async function canonicalList(userClient, userId, body) {
+async function scopedRemoteGet(accessToken, connection, fileId) {
+  const root = await validateRootFolder(accessToken, connection)
+  const file = await googleGet(accessToken, fileId)
+  if (String(file.id) === root.id) throw appError('A pasta raiz JARVIS nao e um arquivo indexavel', 'drive_root_not_file', 400)
+  const inside = await isFileInsideRoot(file, root.id, (id) => googleGet(accessToken, id))
+  if (!inside) throw appError('Arquivo fora de Meu Drive / JARVIS', 'drive_file_outside_root', 404)
+  return { file, root }
+}
+
+async function canonicalList(userClient, userId, body, rootId) {
   const limit = safeLimit(body.limit, 100, 200)
   const offset = safeOffset(body.offset)
-  let query = userClient.from('jarvis_files').select('*', { count: 'exact' }).eq('user_id', userId).eq('provider', PROVIDER)
+  let query = userClient.from('jarvis_files').select('*', { count: 'exact' })
+    .eq('user_id', userId)
+    .eq('provider', PROVIDER)
+    .contains('metadata', { drive_root_folder_id: rootId, drive_scope_mode: 'root_folder_tree' })
   const q = String(body.q || '').trim()
   if (q) query = query.ilike('name', `%${q.replace(/[%_]/g, '\\$&')}%`)
   if (body.project_id === 'none') query = query.is('project_id', null)
@@ -215,17 +270,9 @@ async function canonicalList(userClient, userId, body) {
 }
 
 async function syncFiles(userClient, userId) {
-  const { accessToken } = await accessTokenFor(userClient, userId)
-  const remote = []
-  let pageToken = null
-  let pages = 0
-  do {
-    const page = await googleList(accessToken, { page_size: 1000, page_token: pageToken })
-    remote.push(...page.files)
-    pageToken = page.next_page_token
-    pages += 1
-    if (pages >= 50 && pageToken) throw Object.assign(new Error('Drive muito grande para uma sincronizacao unica. Nenhum metadado foi removido.'), { status: 413, code: 'drive_sync_page_limit' })
-  } while (pageToken)
+  const { accessToken, connection } = await accessTokenFor(userClient, userId)
+  const root = await validateRootFolder(accessToken, connection)
+  const walked = await walkDriveTree(root.id, (parentId, pageToken) => googleListChildren(accessToken, parentId, { page_size: 1000, page_token: pageToken }))
 
   const { data: existing, error: existingError } = await userClient.from('jarvis_files')
     .select('id,provider_file_id,project_id')
@@ -233,13 +280,14 @@ async function syncFiles(userClient, userId) {
     .eq('provider', PROVIDER)
   if (existingError) throw existingError
   const projectByProviderId = new Map((existing || []).map((row) => [row.provider_file_id, row.project_id || null]))
-  const rows = remote.map((file) => ({
-    ...normalizeRemoteFile(file, userId),
+
+  const rows = walked.entries.map(({ file, parent_id, depth }) => ({
+    ...normalizeRemoteFile(file, userId, { root_id: root.id, parent_id, depth }),
     project_id: projectByProviderId.get(String(file.id)) || null,
   }))
+
   for (let i = 0; i < rows.length; i += 500) {
-    const chunk = rows.slice(i, i + 500)
-    const { error } = await userClient.from('jarvis_files').upsert(chunk, { onConflict: 'user_id,provider,provider_file_id' })
+    const { error } = await userClient.from('jarvis_files').upsert(rows.slice(i, i + 500), { onConflict: 'user_id,provider,provider_file_id' })
     if (error) throw error
   }
 
@@ -250,12 +298,20 @@ async function syncFiles(userClient, userId) {
     if (error) throw error
   }
 
-  return { synced: rows.length, removed: staleIds.length, pages, synced_at: new Date().toISOString() }
+  return {
+    synced: rows.length,
+    removed: staleIds.length,
+    pages: walked.pages,
+    folders_visited: walked.folders_visited,
+    synced_at: new Date().toISOString(),
+    source: `Meu Drive / ${root.name}`,
+    root_folder_name: root.name,
+  }
 }
 
 function fileTypeLabel(mime = '') {
   if (mime === 'application/pdf') return 'PDF'
-  if (mime === 'application/vnd.google-apps.folder') return 'pasta'
+  if (mime === DRIVE_FOLDER_MIME) return 'pasta'
   if (mime.startsWith('image/')) return 'imagem'
   if (mime === 'application/vnd.google-apps.spreadsheet' || mime.includes('spreadsheet')) return 'planilha'
   if (mime === 'application/vnd.google-apps.presentation' || mime.includes('presentation')) return 'apresentacao'
@@ -268,11 +324,17 @@ function queryTerms(message) {
   return normalizeText(message).split(/[^a-z0-9]+/).filter((word) => word.length >= 3 && !stop.has(word))
 }
 
-async function jarvisQuery(userClient, userId, message) {
+async function jarvisQuery(userClient, userId, message, rootId) {
   const normalizedMessage = normalizeText(message)
   const [{ data: projects, error: projectError }, { data: files, error: fileError }] = await Promise.all([
     userClient.from('jarvis_projects').select('id,name').eq('user_id', userId).limit(200),
-    userClient.from('jarvis_files').select('id,name,mime_type,web_view_link,modified_at_provider,project_id').eq('user_id', userId).eq('provider', PROVIDER).order('modified_at_provider', { ascending: false, nullsFirst: false }).limit(1000),
+    userClient.from('jarvis_files')
+      .select('id,name,mime_type,web_view_link,modified_at_provider,project_id')
+      .eq('user_id', userId)
+      .eq('provider', PROVIDER)
+      .contains('metadata', { drive_root_folder_id: rootId, drive_scope_mode: 'root_folder_tree' })
+      .order('modified_at_provider', { ascending: false, nullsFirst: false })
+      .limit(1000),
   ])
   if (projectError) throw projectError
   if (fileError) throw fileError
@@ -299,9 +361,9 @@ async function jarvisQuery(userClient, userId, message) {
   const projectNames = new Map((projects || []).map((p) => [p.id, p.name]))
   let reply
   if (!scored.length) {
-    reply = project ? `Nao encontrei arquivos sincronizados ligados ao projeto ${project.name}. Abra Arquivos e use Atualizar arquivos se o Drive mudou recentemente.` : 'Nao encontrei arquivos sincronizados com esses termos. Abra Arquivos e use Atualizar arquivos se o Drive mudou recentemente.'
+    reply = project ? `Nao encontrei arquivos sincronizados ligados ao projeto ${project.name}. Coloque o arquivo em Meu Drive / JARVIS e use Atualizar arquivos.` : 'Nao encontrei arquivos sincronizados com esses termos. Coloque o arquivo em Meu Drive / JARVIS e use Atualizar arquivos.'
   } else {
-    const intro = project ? `Encontrei ${scored.length} arquivo${scored.length === 1 ? '' : 's'} ligado${scored.length === 1 ? '' : 's'} ao projeto ${project.name}:` : `Encontrei ${scored.length} arquivo${scored.length === 1 ? '' : 's'}:`
+    const intro = project ? `Encontrei ${scored.length} arquivo${scored.length === 1 ? '' : 's'} ligado${scored.length === 1 ? '' : 's'} ao projeto ${project.name}:` : `Encontrei ${scored.length} arquivo${scored.length === 1 ? '' : 's'} em Meu Drive / JARVIS:`
     const lines = scored.map((file, index) => {
       const context = file.project_id ? ` · projeto ${projectNames.get(file.project_id) || 'relacionado'}` : ''
       const link = file.web_view_link ? ` · ${file.web_view_link}` : ''
@@ -321,7 +383,7 @@ async function jarvisQuery(userClient, userId, message) {
     confidence: 1,
     status: 'processed',
     processed_at: now,
-    raw_data: { engine: 'jarvis-drive-metadata', metadata_only: true },
+    raw_data: { engine: 'jarvis-drive-metadata', metadata_only: true, scope: 'Meu Drive / JARVIS' },
   }).select('id').single()
   if (inboundError) throw inboundError
   const { error: outboundError } = await userClient.from('jarvis_messages').insert({
@@ -335,7 +397,7 @@ async function jarvisQuery(userClient, userId, message) {
     status: 'processed',
     processed_at: now,
     reply_to_id: inbound.id,
-    raw_data: { engine: 'jarvis-drive-metadata', metadata_only: true, file_ids: scored.map((file) => file.id) },
+    raw_data: { engine: 'jarvis-drive-metadata', metadata_only: true, scope: 'Meu Drive / JARVIS', file_ids: scored.map((file) => file.id) },
   })
   if (outboundError) throw outboundError
   return { reply, items: scored, engine: 'jarvis-drive-metadata' }
@@ -354,52 +416,70 @@ Deno.serve(async (req) => {
 
     if (action === 'status') {
       const connection = await driveConnection(userClient, user.id)
-      return json({ ok: true, connected: true, provider: PROVIDER, display_name: connection.display_name || null, scopes: connection.scopes || [] })
+      const root = driveRootConfig(connection)
+      return json({ ok: true, connected: true, provider: PROVIDER, display_name: connection.display_name || null, scopes: connection.scopes || [], source: `Meu Drive / ${root.name}`, root_folder_name: root.name, scope_mode: root.mode })
     }
     if (action === 'remote_list') {
-      const { accessToken } = await accessTokenFor(userClient, user.id)
-      const page = await googleList(accessToken, { page_size: body.page_size, page_token: body.page_token, name_query: body.q, mime_type: body.mime_type })
-      return json({ ok: true, items: page.files.map((file) => normalizeRemoteFile(file, user.id)), next_page_token: page.next_page_token })
+      const { accessToken, connection } = await accessTokenFor(userClient, user.id)
+      const root = await validateRootFolder(accessToken, connection)
+      const parentId = String(body.parent_id || root.id)
+      await requireFolderInsideRoot(accessToken, parentId, root)
+      const page = await googleListChildren(accessToken, parentId, { page_size: body.page_size, page_token: body.page_token, name_query: body.q, mime_type: body.mime_type })
+      return json({ ok: true, items: page.files.map((file) => normalizeRemoteFile(file, user.id, { root_id: root.id, parent_id: parentId })), next_page_token: page.next_page_token, source: `Meu Drive / ${root.name}` })
     }
     if (action === 'remote_get') {
       if (!body.provider_file_id) return json({ error: 'provider_file_id obrigatorio' }, 400)
-      const { accessToken } = await accessTokenFor(userClient, user.id)
-      const file = await googleGet(accessToken, String(body.provider_file_id))
-      return json({ ok: true, item: normalizeRemoteFile(file, user.id) })
+      const { accessToken, connection } = await accessTokenFor(userClient, user.id)
+      const scoped = await scopedRemoteGet(accessToken, connection, String(body.provider_file_id))
+      return json({ ok: true, item: normalizeRemoteFile(scoped.file, user.id, { root_id: scoped.root.id }), source: `Meu Drive / ${scoped.root.name}` })
     }
     if (action === 'sync') {
-      const result = await syncFiles(userClient, user.id)
-      return json({ ok: true, ...result })
+      return json({ ok: true, ...(await syncFiles(userClient, user.id)) })
     }
+
+    const connection = await driveConnection(userClient, user.id)
+    const root = driveRootConfig(connection)
+
     if (action === 'list') {
-      return json({ ok: true, ...(await canonicalList(userClient, user.id, body)) })
+      return json({ ok: true, ...(await canonicalList(userClient, user.id, body, root.id)), source: `Meu Drive / ${root.name}` })
     }
     if (action === 'get') {
-      const { data, error } = await userClient.from('jarvis_files').select('*').eq('user_id', user.id).eq('id', body.id).maybeSingle()
+      const { data, error } = await userClient.from('jarvis_files').select('*')
+        .eq('user_id', user.id)
+        .eq('id', body.id)
+        .contains('metadata', { drive_root_folder_id: root.id, drive_scope_mode: 'root_folder_tree' })
+        .maybeSingle()
       if (error) throw error
       return json({ ok: true, item: data || null })
     }
     if (action === 'link') {
       if (!body.id || !body.project_id) return json({ error: 'id e project_id obrigatorios' }, 400)
-      const { data, error } = await userClient.from('jarvis_files').update({ project_id: body.project_id }).eq('user_id', user.id).eq('id', body.id).select('*').single()
+      const { data, error } = await userClient.from('jarvis_files').update({ project_id: body.project_id })
+        .eq('user_id', user.id)
+        .eq('id', body.id)
+        .contains('metadata', { drive_root_folder_id: root.id, drive_scope_mode: 'root_folder_tree' })
+        .select('*').single()
       if (error) throw error
       return json({ ok: true, item: data })
     }
     if (action === 'unlink') {
       if (!body.id) return json({ error: 'id obrigatorio' }, 400)
-      const { data, error } = await userClient.from('jarvis_files').update({ project_id: null }).eq('user_id', user.id).eq('id', body.id).select('*').single()
+      const { data, error } = await userClient.from('jarvis_files').update({ project_id: null })
+        .eq('user_id', user.id)
+        .eq('id', body.id)
+        .contains('metadata', { drive_root_folder_id: root.id, drive_scope_mode: 'root_folder_tree' })
+        .select('*').single()
       if (error) throw error
       return json({ ok: true, item: data })
     }
     if (action === 'jarvis_query') {
       const message = String(body.message || '').trim()
       if (!message) return json({ error: 'message obrigatoria' }, 400)
-      return json({ ok: true, ...(await jarvisQuery(userClient, user.id, message)) })
+      return json({ ok: true, ...(await jarvisQuery(userClient, user.id, message, root.id)) })
     }
     return json({ error: 'Acao nao suportada', code: 'unsupported_action' }, 400)
   } catch (e) {
     console.error(e)
-    const status = Number(e?.status || 500)
-    return json({ error: e instanceof Error ? e.message : String(e), code: e?.code || 'drive_unavailable' }, status)
+    return json({ error: e instanceof Error ? e.message : String(e), code: e?.code || 'drive_unavailable' }, Number(e?.status || 500))
   }
 })
