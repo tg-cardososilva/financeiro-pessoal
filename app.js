@@ -2334,6 +2334,8 @@ async function loadJarvisData(force = false) {
   } catch (err) {
     console.error('Falha ao carregar dados do Jarvis:', err)
     state.jarvis.error = humanError(err)
+    state.jarvis.loaded = true
+    toast(state.jarvis.error, 'error')
   } finally {
     state.jarvis.loading = false
     if (['jarvis','home','agenda','tasks','notes','projects'].includes(state.view)) renderMain()
