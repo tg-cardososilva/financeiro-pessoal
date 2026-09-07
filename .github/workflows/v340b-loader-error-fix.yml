@@ -1,0 +1,49 @@
+name: v3.4.0b loader error fix
+
+on:
+  push:
+    branches: [v3.4.0b-operational-modules]
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v3.4.0b-operational-modules
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply loader guard
+        run: python scripts/v340b_loader_error_fix.py
+      - name: Validate
+        run: |
+          node --check app.js
+          node --experimental-default-type=module tests/domain-ui.test.mjs
+          node --experimental-default-type=module tests/v340b-attention.test.mjs
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          app=Path('app.js').read_text()
+          load=re.search(r'async function loadJarvisData\(force = false\) \{.*?\n\}',app,re.S).group(0)
+          assert "state.jarvis.loaded = true" in load
+          assert "toast(state.jarvis.error, 'error')" in load
+          for write in ['domainCreate(','domainUpdate(','domainDelete(','domainTransition(']: assert write not in load
+          for table in ['jarvis_tasks','jarvis_notes','jarvis_projects']:
+              assert f"from('{table}')" not in app
+              assert f'from("{table}")' not in app
+          print('loader guard audit: ok')
+          PY
+          git diff --check
+      - name: Commit clean repair
+        run: |
+          rm -f scripts/v340b_loader_error_fix.py .github/workflows/v340b-loader-error-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: estabilizar falha de leitura do jarvis-domain'
+          git push origin HEAD:v3.4.0b-operational-modules
