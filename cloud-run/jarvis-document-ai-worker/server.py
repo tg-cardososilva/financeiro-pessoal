@@ -34,7 +34,7 @@ def google_access_token():
         return json.load(response)['access_token']
 
 
-def verify_request(headers, body):
+def verify_signed_headers(headers):
     if not WORKER_SECRET:
         raise ValueError('worker_secret_missing')
     timestamp = headers.get('X-Jarvis-Timestamp', '')
@@ -50,13 +50,17 @@ def verify_request(headers, body):
         raise PermissionError('invalid_timestamp') from exc
     if abs(int(time.time()) - ts) > 300:
         raise PermissionError('request_expired')
-    actual_sha = hashlib.sha256(body).hexdigest()
-    if not hmac.compare_digest(actual_sha, content_sha):
-        raise PermissionError('content_hash_mismatch')
     canonical = f'{timestamp}\n{user_id}\n{file_id}\n{content_sha}'.encode('utf-8')
     expected = hmac.new(WORKER_SECRET.encode('utf-8'), canonical, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature):
         raise PermissionError('invalid_signature')
+    return content_sha
+
+
+def verify_body_hash(body, content_sha):
+    actual_sha = hashlib.sha256(body).hexdigest()
+    if not hmac.compare_digest(actual_sha, content_sha):
+        raise PermissionError('content_hash_mismatch')
 
 
 def decode_filename(value):
@@ -112,8 +116,10 @@ class Handler(BaseHTTPRequestHandler):
             mime_type = (self.headers.get('Content-Type') or '').split(';', 1)[0].strip().lower()
             if mime_type not in {'application/pdf', 'image/jpeg', 'image/png'}:
                 return send_json(self, {'ok': False, 'code': 'unsupported_document_mime', 'error': 'MIME nao suportado'}, 415)
+            # Authenticate the request before reading the potentially large body.
+            content_sha = verify_signed_headers(self.headers)
             body = self.rfile.read(length)
-            verify_request(self.headers, body)
+            verify_body_hash(body, content_sha)
             display_name = decode_filename(self.headers.get('X-Jarvis-Filename-B64', ''))
             result = process_document(body, mime_type, display_name)
             return send_json(self, {
