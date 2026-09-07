@@ -44,6 +44,6 @@ section = '''
 - Testes de banco cobrem CRUD e transicoes em transacao revertida, incluindo associacao valida e rejeicao de `project_id` cruzado. Nenhum dado artificial fica persistido.
 '''
 if '## v3.4.0b' not in r:
-    r = r.rstrip() + section + '\n'
-readme.write_text(r)
+    r = r.rstrip() + section
+readme.write_text(r.rstrip() + '\n')
 print('v3.4.0b final files prepared')
