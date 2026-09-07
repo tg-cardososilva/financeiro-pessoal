@@ -1,4 +1,6 @@
-import { buildAttentionItems, attentionSummary, ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=3.3.1'
+import { buildAttentionItems, attentionSummary, ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=3.4.0b'
+import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=3.4.0b'
+import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=3.4.0b'
 
 const SUPABASE_URL = 'https://qhpkraqrcvhhtbqjhkmm.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_OXgobfJOCgDy4OP2n_zKgg_tOvEa28F'
@@ -63,7 +65,12 @@ const state = {
   investmentMovementFilter: 'all',
   jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], counts: { annotations: 0, notes: 0, tasks: 0, projects: 0, actions: 0 }, loading: false, loaded: false, engine: null, error: null },
   calendar: { events: [], loading: false, loaded: false, error: null, connected: null, syncedAt: null, displayName: null },
-  attention: { reviewTransactions: [], loading: false, loaded: false, error: null }
+  attention: { reviewTransactions: [], loading: false, loaded: false, error: null },
+  domainUi: {
+    task: { q: '', status: 'open', priority: 'all', due: 'all', project: 'all' },
+    note: { q: '', type: 'all', tag: 'all', project: 'all' },
+    project: { q: '', status: 'all', due: 'all' }
+  }
 }
 
 function esc(v = '') {
@@ -2300,317 +2307,36 @@ async function loadJarvisData(force = false) {
     const [messages, annotations, notes, tasks, projects, actions, connections] = await Promise.all([
       supabase.from('jarvis_messages').select('*').order('created_at', { ascending: false }).limit(80),
       supabase.from('financial_annotations').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
-      supabase.from('jarvis_notes').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
-      supabase.from('jarvis_tasks').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
-      supabase.from('jarvis_projects').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
+      domainList(supabase, 'note'),
+      domainList(supabase, 'task'),
+      domainList(supabase, 'project'),
       supabase.from('jarvis_actions').select('*', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
       supabase.from('jarvis_connections').select('*').order('updated_at', { ascending: false }).limit(12)
     ])
-    const err = messages.error || annotations.error || notes.error || tasks.error || projects.error || actions.error || connections.error
+    const err = messages.error || annotations.error || actions.error || connections.error
     if (err) throw err
     state.jarvis.messages = (messages.data || []).reverse()
     state.jarvis.annotations = dedupeJarvisAnnotations(annotations.data || [])
-    state.jarvis.notes = notes.data || []
-    state.jarvis.tasks = tasks.data || []
-    state.jarvis.projects = projects.data || []
+    state.jarvis.notes = notes
+    state.jarvis.tasks = tasks
+    state.jarvis.projects = projects
     state.jarvis.actions = dedupeJarvisActions(actions.data || [])
-    state.jarvis.counts = { annotations: annotations.count ?? state.jarvis.annotations.length, notes: notes.count ?? state.jarvis.notes.length, tasks: tasks.count ?? state.jarvis.tasks.length, projects: projects.count ?? state.jarvis.projects.length, actions: actions.count ?? state.jarvis.actions.length }
+    state.jarvis.counts = {
+      annotations: annotations.count ?? state.jarvis.annotations.length,
+      notes: state.jarvis.notes.length,
+      tasks: state.jarvis.tasks.length,
+      projects: state.jarvis.projects.length,
+      actions: actions.count ?? state.jarvis.actions.length
+    }
     state.jarvis.connections = connections.data || []
     state.jarvis.error = null
     state.jarvis.loaded = true
   } catch (err) {
+    console.error('Falha ao carregar dados do Jarvis:', err)
     state.jarvis.error = humanError(err)
-    state.jarvis.loaded = true
-    toast(state.jarvis.error, 'error')
   } finally {
     state.jarvis.loading = false
     if (['jarvis','home','agenda','tasks','notes','projects'].includes(state.view)) renderMain()
-  }
-}
-
-function jarvisIntentLabel(intent) {
-  return ({ financial: 'Financeiro', note: 'Nota', reminder: 'Lembrete', calendar: 'Agenda', project: 'Projeto', query: 'Consulta', conversation: 'Conversa', unknown: 'Indefinido' })[intent] || 'Mensagem'
-}
-
-function jarvisCreatedSummary() {
-  const pending = state.jarvis.annotations.filter((x) => x.reconciliation_status === 'pending').length
-  const tasks = state.jarvis.tasks.filter((x) => x.status === 'pending').length
-  const actions = state.jarvis.actions.filter((x) => x.status === 'proposed').length
-  return [
-    ['Contextos financeiros', pending, 'Aguardando conciliação com extratos'],
-    ['Notas e ideias', state.jarvis.notes.length, 'Memória estruturada do Jarvis'],
-    ['Lembretes', tasks, 'Pendentes'],
-    ['Ações para confirmar', actions, 'Agenda e ações externas']
-  ]
-}
-
-function jarvisGoogleConnection() {
-  return state.jarvis.connections.find((x) => x.provider === 'google_calendar' && x.status === 'connected') || null
-}
-
-function formatJarvisEvent(payload = {}) {
-  const start = payload.starts_at ? new Date(payload.starts_at) : null
-  const end = payload.ends_at ? new Date(payload.ends_at) : null
-  const date = start ? new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).format(start) : 'Data pendente'
-  const time = start ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(start) : '--:--'
-  const endTime = end ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(end) : null
-  return `${date} · ${time}${endTime ? `–${endTime}` : ''}`
-}
-
-async function connectJarvisGoogleCalendar() {
-  const btn = $('jarvisGoogleConnect')
-  setBusy(btn, true, 'Abrindo Google')
-  try {
-    const { data, error } = await supabase.functions.invoke('jarvis-google-oauth', { body: {} })
-    if (error) throw error
-    if (data?.error) throw new Error(data.error)
-    if (!data?.authorization_url) throw new Error('O Google não retornou a tela de autorização.')
-    location.href = data.authorization_url
-  } catch (err) {
-    toast(humanError(err), 'error')
-    setBusy(btn, false)
-  }
-}
-
-async function executeJarvisCalendarAction(actionId) {
-  const btn = document.querySelector(`[data-jarvis-calendar-action="${actionId}"]`)
-  setBusy(btn, true, 'Agendando')
-  try {
-    const { data, error } = await supabase.functions.invoke('jarvis-calendar', { body: { action_id: actionId } })
-    if (error) throw error
-    if (data?.error) throw new Error(data.error)
-    toast('Evento criado no Google Calendar.', 'success')
-    await Promise.all([loadJarvisData(true), loadCalendarData(true)])
-  } catch (err) {
-    toast(humanError(err), 'error')
-    setBusy(btn, false)
-  }
-}
-
-async function testJarvisWhatsApp() {
-  const btn = $('jarvisWhatsAppTest')
-  const numberInput = $('jarvisWhatsAppNumber')
-  const resultBox = $('jarvisWhatsAppResult')
-  const to = String(numberInput?.value || '').replace(/\D/g, '')
-  if (!to) {
-    if (resultBox) { resultBox.className = 'form-message error'; resultBox.textContent = 'Digite o numero com DDI e DDD. Ex.: 5521999999999.' }
-    numberInput?.focus()
-    return
-  }
-  localStorage.setItem('jarvis_whatsapp_test_number', to)
-  if (resultBox) { resultBox.className = 'form-message hidden'; resultBox.textContent = '' }
-  setBusy(btn, true, 'Enviando')
-  try {
-    const { data, error } = await supabase.functions.invoke('jarvis-whatsapp-send', {
-      body: { to, use_template: true }
-    })
-    if (error) {
-      let details = null
-      try { details = await error.context?.json?.() } catch (_) {}
-      if (details) throw new Error([details.error, details.error_code ? `codigo ${details.error_code}` : '', details.error_subcode ? `subcodigo ${details.error_subcode}` : ''].filter(Boolean).join(' · '))
-      throw error
-    }
-    if (data?.error || data?.ok === false) throw new Error([data?.error || 'Falha no envio', data?.error_code ? `codigo ${data.error_code}` : '', data?.error_subcode ? `subcodigo ${data.error_subcode}` : ''].filter(Boolean).join(' · '))
-    const messageId = data?.result?.messages?.[0]?.id || null
-    if (resultBox) {
-      resultBox.className = 'form-message success'
-      resultBox.textContent = messageId ? `Meta aceitou o envio. Message ID: ${messageId}` : 'Meta aceitou o envio do teste.'
-    }
-    toast('Teste enviado diretamente pela WhatsApp Cloud API.', 'success')
-  } catch (err) {
-    const msg = humanError(err)
-    if (resultBox) { resultBox.className = 'form-message error'; resultBox.textContent = msg }
-    toast(msg, 'error')
-  } finally {
-    setBusy(btn, false)
-  }
-}
-
-
-function jarvisDateTime(value, options = {}) {
-  if (!value) return 'Sem data definida'
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return 'Sem data definida'
-  return new Intl.DateTimeFormat('pt-BR', {
-    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-    ...options
-  }).format(d)
-}
-
-function jarvisProjectName(project) {
-  return project?.name || project?.title || project?.project_name || 'Projeto sem nome'
-}
-
-function jarvisTaskTime(task) {
-  return task?.remind_at || task?.due_at || null
-}
-
-function isSameLocalDay(a, b = new Date()) {
-  if (!a) return false
-  const d = new Date(a)
-  return d.getFullYear() === b.getFullYear() && d.getMonth() === b.getMonth() && d.getDate() === b.getDate()
-}
-
-function personalLoading() {
-  return `<div class="personal-loading"><span class="spinner"></span><span>Sincronizando seu ambiente pessoal...</span></div>`
-}
-
-function bindPersonalNav() {
-  document.querySelectorAll('[data-personal-nav]').forEach((b) => b.addEventListener('click', () => navigate(b.dataset.personalNav)))
-}
-
-const JARVIS_VISUAL_LABELS = {
-  idle: 'Jarvis online',
-  listening: 'Ouvindo você',
-  thinking: 'Pensando',
-  speaking: 'Respondendo',
-  attention: 'Aguardando confirmação'
-}
-
-function jarvisPresenceMarkup(visualState = 'idle', variant = 'default') {
-  const safeState = JARVIS_VISUAL_LABELS[visualState] ? visualState : 'idle'
-  return `<div class="jarvis-presence ${variant === 'hero' ? 'hero-presence' : ''} jarvis-state-${safeState}" data-jarvis-presence data-jarvis-visual-state="${safeState}">
-    <div class="jarvis-presence-orbit orbit-a"></div><div class="jarvis-presence-orbit orbit-b"></div><div class="jarvis-presence-scan"></div>
-    <div class="jarvis-presence-avatar"><img src="./jarvis-avatar.png" alt="Jarvis, assistente pessoal"></div>
-    <div class="jarvis-audio-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-    <div class="jarvis-presence-status"><span></span><b data-jarvis-state-label>${esc(JARVIS_VISUAL_LABELS[safeState])}</b></div>
-  </div>`
-}
-
-function setJarvisVisualState(next = 'idle', holdMs = 0) {
-  const safe = JARVIS_VISUAL_LABELS[next] ? next : 'idle'
-  document.querySelectorAll('[data-jarvis-presence]').forEach((el) => {
-    Object.keys(JARVIS_VISUAL_LABELS).forEach((stateName) => el.classList.remove(`jarvis-state-${stateName}`))
-    el.classList.add(`jarvis-state-${safe}`)
-    el.dataset.jarvisVisualState = safe
-    const label = el.querySelector('[data-jarvis-state-label]')
-    if (label) label.textContent = JARVIS_VISUAL_LABELS[safe]
-  })
-  if (holdMs > 0) {
-    clearTimeout(window.__jarvisVisualTimer)
-    window.__jarvisVisualTimer = setTimeout(() => {
-      const hasPending = state.jarvis.actions.some((x) => x.status === 'proposed')
-      setJarvisVisualState(hasPending ? 'attention' : 'idle')
-    }, holdMs)
-  }
-}
-
-const JARVIS_TIMEZONE = 'America/Sao_Paulo'
-
-function normalizeJarvisText(value = '') {
-  return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-}
-
-function shouldUseCalendarRead(message = '') {
-  const text = normalizeJarvisText(message)
-  const writeIntent = /\b(agende|agendar|marque|marcar|crie|criar|adicione|adicionar|cancele|cancelar|remarque|remarcar|mude|mudar|altere|alterar|apague|apagar|remova|remover)\b/.test(text)
-    || /^(jarvis[,:]?\s+)?agenda\s+(uma|um|a|o|reuniao|evento|consulta|compromisso)\b/.test(text)
-  if (writeIntent) return false
-  return /\b(calendario|compromisso|compromissos|reuniao|reunioes|evento|eventos|agenda)\b/.test(text)
-    || /\bo que (eu )?tenho (hoje|amanha)\b/.test(text)
-    || /\btenho (algo|algum compromisso|alguma reuniao) (hoje|amanha)\b/.test(text)
-}
-
-async function invokeJarvisEngine(message, source = 'panel_jarvis') {
-  const functionName = shouldUseCalendarRead(message) ? 'jarvis-calendar-query' : 'jarvis-core'
-  return supabase.functions.invoke(functionName, { body: { message, channel: 'web', source } })
-}
-
-async function sendJarvisQuick(message, button = null) {
-  const text = String(message || '').trim()
-  if (!text) return false
-  setBusy(button, true, 'Enviando')
-  setJarvisVisualState('thinking')
-  try {
-    const { data, error } = await invokeJarvisEngine(text, `panel_${state.view}`)
-    if (error) throw error
-    if (data?.error) throw new Error(data.error)
-    state.jarvis.engine = data?.engine || state.jarvis.engine
-    await loadJarvisData(true)
-    if (data?.confirmation_required) { toast('Ação preparada e aguardando sua confirmação.', 'success'); setJarvisVisualState('attention') }
-    else { toast('Jarvis atualizou seu ambiente.', 'success'); setJarvisVisualState('speaking', 1400) }
-    return true
-  } catch (err) {
-    toast(humanError(err), 'error')
-    setJarvisVisualState('idle')
-    setBusy(button, false)
-    return false
-  }
-}
-
-function zonedDateKey(value = new Date()) {
-  const d = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: JARVIS_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d)
-  const get = (type) => parts.find((p) => p.type === type)?.value || ''
-  return `${get('year')}-${get('month')}-${get('day')}`
-}
-
-function addDateKeyDays(key, days) {
-  const [y,m,d] = String(key).split('-').map(Number)
-  if (!y || !m || !d) return ''
-  return new Date(Date.UTC(y, m - 1, d + days, 12)).toISOString().slice(0,10)
-}
-
-function calendarEventDateKey(event) {
-  if (event?.all_day && /^\d{4}-\d{2}-\d{2}$/.test(String(event?.start || ''))) return String(event.start)
-  return zonedDateKey(event?.start)
-}
-
-function calendarEventStartDate(event) {
-  if (!event?.start) return null
-  if (event.all_day && /^\d{4}-\d{2}-\d{2}$/.test(String(event.start))) {
-    const [y,m,d] = event.start.split('-').map(Number)
-    return new Date(Date.UTC(y, m - 1, d, 12))
-  }
-  const date = new Date(event.start)
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
-function calendarEventTimeLabel(event) {
-  if (event?.all_day) return 'Dia inteiro'
-  const date = calendarEventStartDate(event)
-  if (!date) return '--:--'
-  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, hour: '2-digit', minute: '2-digit' }).format(date)
-}
-
-function calendarEventDateLabel(event) {
-  const date = calendarEventStartDate(event)
-  if (!date) return '--'
-  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, day: '2-digit', month: 'short' }).format(date)
-}
-
-function calendarEventDayLabel(event) {
-  const date = calendarEventStartDate(event)
-  if (!date) return '--'
-  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, day: '2-digit' }).format(date)
-}
-
-function calendarEventMonthLabel(event) {
-  const date = calendarEventStartDate(event)
-  if (!date) return ''
-  return new Intl.DateTimeFormat('pt-BR', { timeZone: JARVIS_TIMEZONE, month: 'short' }).format(date)
-}
-
-function dedupeCalendarEvents(items = []) {
-  const seen = new Set(), out = []
-  for (const event of items) {
-    const key = `${event?.id || ''}|${event?.start || ''}`
-    if (!event?.id || seen.has(key)) continue
-    seen.add(key)
-    out.push(event)
-  }
-  return out.sort((a,b) => (calendarEventStartDate(a)?.getTime() || 0) - (calendarEventStartDate(b)?.getTime() || 0))
-}
-
-function groupCalendarEvents(items = []) {
-  const today = zonedDateKey()
-  const tomorrow = addDateKeyDays(today, 1)
-  const afterTomorrow = addDateKeyDays(today, 2)
-  return {
-    today: items.filter((event) => calendarEventDateKey(event) === today),
-    tomorrow: items.filter((event) => calendarEventDateKey(event) === tomorrow),
-    upcoming: items.filter((event) => calendarEventDateKey(event) >= afterTomorrow).slice(0,8)
   }
 }
 
@@ -2674,7 +2400,7 @@ function renderHome() {
   const calendarGroups = groupCalendarEvents(state.calendar.events)
   const todayEvents = calendarGroups.today
   const latestNotes = state.jarvis.notes.slice(0,3)
-  const allActiveProjects = state.jarvis.projects.filter((x) => !['completed','archived','cancelled'].includes(String(x.status || '').toLowerCase()))
+  const allActiveProjects = state.jarvis.projects.filter((x) => ['active','paused'].includes(String(x.status || '').toLowerCase()))
   const activeProjects = allActiveProjects.slice(0,3)
   const tx = visibleTransactions()
   const totals = calcTotals(tx)
@@ -2805,39 +2531,220 @@ function renderAgenda() {
   document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
 }
 
+function domainProjectName(id) {
+  return state.jarvis.projects.find((project) => project.id === id)?.name || 'Sem projeto'
+}
+
+function domainProjectOptions(selected = '') {
+  return `<option value="">Sem projeto</option>${state.jarvis.projects.map((project) => `<option value="${esc(project.id)}" ${project.id === selected ? 'selected' : ''}>${esc(project.name)} · ${esc(PROJECT_STATUS_LABELS[project.status] || project.status)}</option>`).join('')}`
+}
+
+function domainDateInput(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function domainDateToIso(value) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) throw new Error('Informe uma data e horário válidos.')
+  return date.toISOString()
+}
+
+function domainWhen(value, fallback = 'Sem prazo') {
+  return value ? jarvisDateTime(value) : fallback
+}
+
+function domainTechnicalDetails(record) {
+  if (!record) return ''
+  return `<details class="domain-tech"><summary>Detalhes técnicos</summary><div><span>Origem</span><strong>${esc(SOURCE_LABELS[record.source] || record.source || 'Não informada')}</strong></div><div><span>ID</span><code>${esc(record.id || '')}</code></div><div><span>Criado</span><strong>${esc(domainWhen(record.created_at, ''))}</strong></div><div><span>Atualizado</span><strong>${esc(domainWhen(record.updated_at, ''))}</strong></div></details>`
+}
+
+async function refreshDomainRecords(message = '') {
+  state.jarvis.loaded = false
+  await loadJarvisData(true)
+  if (message) toast(message, 'success')
+}
+
+async function performDomainWrite(button, callback, successMessage) {
+  if (button) setBusy(button, true, 'Salvando')
+  try {
+    await callback()
+    $('modalHost').innerHTML = ''
+    await refreshDomainRecords(successMessage)
+    return true
+  } catch (err) {
+    toast(humanError(err), 'error')
+    if (button) setBusy(button, false)
+    return false
+  }
+}
+
+function taskStatusChip(task) {
+  return `<span class="domain-chip status ${esc(task.status)}">${esc(TASK_STATUS_LABELS[task.status] || task.status)}</span>`
+}
+function taskPriorityChip(task) {
+  return `<span class="domain-chip priority ${esc(task.priority)}">${esc(TASK_PRIORITY_LABELS[task.priority] || task.priority)}</span>`
+}
+function projectStatusChip(project) {
+  return `<span class="domain-chip status ${esc(project.status)}">${esc(PROJECT_STATUS_LABELS[project.status] || project.status)}</span>`
+}
+function noteTypeChip(note) {
+  return `<span class="domain-chip note ${esc(note.note_type)}">${esc(NOTE_TYPE_LABELS[note.note_type] || note.note_type)}</span>`
+}
+
+function openTaskEditor(id = null) {
+  const task = id ? state.jarvis.tasks.find((item) => item.id === id) : null
+  const modal = $('modalHost')
+  modal.innerHTML = `<div class="modal-backdrop"><form id="domainTaskForm" class="modal wide domain-modal">
+    <div class="modal-head"><div><span class="eyebrow">${task ? 'EDITAR TAREFA' : 'NOVA TAREFA'}</span><h2>${task ? esc(task.title) : 'Criar tarefa'}</h2><div class="modal-sub">Algo que precisa ser feito, com prazo e contexto opcionais.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div>
+    <div class="form-grid">
+      <label class="field-label full-span">Título<input id="domainTaskTitle" value="${esc(task?.title || '')}" maxlength="180" required></label>
+      <label class="field-label full-span">Descrição<textarea id="domainTaskDescription" rows="4">${esc(task?.description || '')}</textarea></label>
+      <label class="field-label">Prazo<input id="domainTaskDue" type="datetime-local" value="${esc(domainDateInput(task?.due_at))}"></label>
+      <label class="field-label">Prioridade<select id="domainTaskPriority">${Object.entries(TASK_PRIORITY_LABELS).map(([value,label]) => `<option value="${value}" ${value === (task?.priority || 'normal') ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
+      <label class="field-label full-span">Projeto<select id="domainTaskProject">${domainProjectOptions(task?.project_id || '')}</select></label>
+    </div>
+    ${task?.recurrence_rule ? `<div class="domain-structural-note"><strong>Recorrência preparada</strong><span>${esc(task.recurrence_rule)}. A execução automática ainda não está ativa nesta versão.</span></div>` : ''}
+    ${domainTechnicalDetails(task)}
+    <div class="modal-actions"><div>${task ? '<button id="domainTaskDelete" class="button danger" type="button">Excluir tarefa</button>' : ''}</div><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="domainTaskSave" class="button primary" type="submit">✓ Salvar</button></div></div>
+  </form></div>`
+  const close = () => { modal.innerHTML = '' }
+  $('closeModal').addEventListener('click', close)
+  $('cancelModal').addEventListener('click', close)
+  $('domainTaskForm').addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const title = $('domainTaskTitle').value.trim()
+    if (!title) return
+    const payload = {
+      title,
+      description: $('domainTaskDescription').value.trim() || null,
+      due_at: domainDateToIso($('domainTaskDue').value),
+      priority: $('domainTaskPriority').value,
+      project_id: $('domainTaskProject').value || null
+    }
+    await performDomainWrite($('domainTaskSave'), () => task ? domainUpdate(supabase, 'task', task.id, payload) : domainCreate(supabase, 'task', payload), task ? 'Tarefa atualizada.' : 'Tarefa criada.')
+  })
+  $('domainTaskDelete')?.addEventListener('click', async () => {
+    if (!confirm(`Excluir definitivamente a tarefa “${task.title}”?`)) return
+    await performDomainWrite($('domainTaskDelete'), () => domainDelete(supabase, 'task', task.id), 'Tarefa excluída.')
+  })
+}
+
+async function transitionTask(id, action, button) {
+  const messages = { task_complete: 'Tarefa concluída.', task_reopen: 'Tarefa reaberta.', task_cancel: 'Tarefa cancelada.' }
+  await performDomainWrite(button, () => domainTransition(supabase, 'task', id, action), messages[action] || 'Tarefa atualizada.')
+}
+
 function renderTasks() {
   if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
-  const pending = state.jarvis.tasks.filter((x) => x.status === 'pending').sort((a,b) => new Date(jarvisTaskTime(a) || '2999-01-01') - new Date(jarvisTaskTime(b) || '2999-01-01'))
-  const done = state.jarvis.tasks.filter((x) => x.status !== 'pending')
-  $('mainArea').innerHTML = `<div class="content-stack personal-section">
-    <section class="section-intro"><div><span class="eyebrow">TAREFAS</span><h2>O que precisa acontecer.</h2><p>Lembretes e pendências entendidos em linguagem natural pelo Jarvis.</p></div></section>
-    <section class="panel quick-capture"><div><span class="eyebrow">CAPTURA RÁPIDA</span><h3>Crie uma tarefa falando normalmente.</h3></div><form id="taskQuickForm"><input id="taskQuickInput" type="text" placeholder="Ex.: me lembra amanhã às 9h de mandar o contrato"><button id="taskQuickBtn" class="button primary" type="submit">Adicionar</button></form></section>
-    <section class="personal-two-col wide-main"><div class="panel"><div class="panel-head"><div><h2>Pendentes</h2><p>${pending.length} tarefa${pending.length === 1 ? '' : 's'} em aberto.</p></div></div><div class="task-list">${pending.length ? pending.map((t) => `<article><span class="task-check">○</span><div><strong>${esc(t.title)}</strong><span>${esc(t.description || 'Sem descrição adicional')}</span><small>${jarvisTaskTime(t) ? esc(jarvisDateTime(jarvisTaskTime(t))) : 'Sem horário definido'} · prioridade ${esc(t.priority || 3)}</small></div><span class="status-pill">${isSameLocalDay(jarvisTaskTime(t)) ? 'Hoje' : 'Pendente'}</span></article>`).join('') : '<div class="personal-empty"><strong>Nada pendente.</strong><span>Você pode criar lembretes aqui ou pelo WhatsApp quando a integração estiver pronta.</span></div>'}</div></div><aside class="panel"><div class="panel-head"><div><h2>Concluídas / encerradas</h2><p>Histórico recente.</p></div></div><div class="simple-history">${done.length ? done.slice(0,8).map((t) => `<div><span>✓</span><p><strong>${esc(t.title)}</strong><small>${esc(t.status || 'concluída')}</small></p></div>`).join('') : '<div class="personal-empty compact"><span>Ainda não há histórico.</span></div>'}</div></aside></section>
+  const filters = state.domainUi.task
+  const tasks = filterTasks(state.jarvis.tasks, filters)
+  const openCount = state.jarvis.tasks.filter((task) => task.status === 'open').length
+  $('mainArea').innerHTML = `<div class="content-stack personal-section domain-section">
+    <section class="section-intro domain-intro"><div><span class="eyebrow">TAREFAS</span><h2>O que precisa acontecer.</h2><p>${openCount} tarefa${openCount === 1 ? '' : 's'} em aberto. Tudo aqui usa o mesmo registro que alimenta a Home e o Jarvis.</p></div><button id="domainNewTask" class="button primary" type="button">＋ Nova tarefa</button></section>
+    <section class="panel domain-toolbar"><label class="domain-search">Buscar<input id="taskFilterQ" type="search" value="${esc(filters.q)}" placeholder="Título ou descrição"></label><label>Status<select id="taskFilterStatus"><option value="all">Todos</option>${Object.entries(TASK_STATUS_LABELS).map(([value,label]) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Prioridade<select id="taskFilterPriority"><option value="all">Todas</option>${Object.entries(TASK_PRIORITY_LABELS).map(([value,label]) => `<option value="${value}" ${filters.priority === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Prazo<select id="taskFilterDue"><option value="all">Qualquer prazo</option><option value="overdue" ${filters.due === 'overdue' ? 'selected' : ''}>Vencidas</option><option value="today" ${filters.due === 'today' ? 'selected' : ''}>Hoje</option><option value="next7" ${filters.due === 'next7' ? 'selected' : ''}>Próximos 7 dias</option><option value="no_due" ${filters.due === 'no_due' ? 'selected' : ''}>Sem prazo</option></select></label><label>Projeto<select id="taskFilterProject"><option value="all">Todos</option>${state.jarvis.projects.map((project) => `<option value="${esc(project.id)}" ${filters.project === project.id ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}</select></label></section>
+    <section class="domain-list">${tasks.length ? tasks.map((task) => `<article class="domain-card task-domain-card"><div class="domain-card-main"><div class="domain-card-chips">${taskStatusChip(task)}${taskPriorityChip(task)}${task.project_id ? `<span class="domain-chip project">${esc(domainProjectName(task.project_id))}</span>` : ''}</div><h3>${esc(task.title)}</h3><p>${esc(task.description || 'Sem descrição adicional.')}</p><div class="domain-card-meta"><span>${esc(domainWhen(task.due_at))}</span>${task.completed_at ? `<span>Concluída ${esc(domainWhen(task.completed_at, ''))}</span>` : ''}</div></div><div class="domain-card-actions">${task.status === 'open' ? `<button class="button small primary" data-task-transition="task_complete" data-id="${esc(task.id)}" type="button">Concluir</button><button class="button small" data-task-transition="task_cancel" data-id="${esc(task.id)}" type="button">Cancelar</button>` : `<button class="button small" data-task-transition="task_reopen" data-id="${esc(task.id)}" type="button">Reabrir</button>`}<button class="button small" data-task-edit="${esc(task.id)}" type="button">Editar</button></div></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhuma tarefa encontrada.</strong><span>Crie uma tarefa real ou ajuste os filtros acima.</span></div>'}</section>
   </div>`
-  $('taskQuickForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const input=$('taskQuickInput'); const raw=input.value.trim(); if(!raw) return; const msg=/\b(lembra|lembrete|tarefa)\b/i.test(raw)?`Jarvis, ${raw}`:`Jarvis, me lembra de ${raw}`; if(await sendJarvisQuick(msg,$('taskQuickBtn'))) input.value='' })
+  $('domainNewTask').addEventListener('click', () => openTaskEditor())
+  const bind = (id, key, event = 'change') => $(id).addEventListener(event, () => { filters[key] = $(id).value; renderTasks() })
+  bind('taskFilterQ', 'q', 'input'); bind('taskFilterStatus', 'status'); bind('taskFilterPriority', 'priority'); bind('taskFilterDue', 'due'); bind('taskFilterProject', 'project')
+  document.querySelectorAll('[data-task-edit]').forEach((button) => button.addEventListener('click', () => openTaskEditor(button.dataset.taskEdit)))
+  document.querySelectorAll('[data-task-transition]').forEach((button) => button.addEventListener('click', () => transitionTask(button.dataset.id, button.dataset.taskTransition, button)))
+}
+
+function openNoteEditor(id = null) {
+  const note = id ? state.jarvis.notes.find((item) => item.id === id) : null
+  const modal = $('modalHost')
+  modal.innerHTML = `<div class="modal-backdrop"><form id="domainNoteForm" class="modal wide domain-modal"><div class="modal-head"><div><span class="eyebrow">${note ? 'EDITAR NOTA' : 'NOVA NOTA'}</span><h2>${note ? esc(note.title) : 'Criar nota ou ideia'}</h2><div class="modal-sub">Informação para guardar, consultar ou desenvolver. Não vira tarefa automaticamente.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label full-span">Título<input id="domainNoteTitle" value="${esc(note?.title || '')}" maxlength="180" required></label><label class="field-label full-span">Conteúdo<textarea id="domainNoteContent" rows="8" required>${esc(note?.content || '')}</textarea></label><label class="field-label">Tipo<select id="domainNoteType">${Object.entries(NOTE_TYPE_LABELS).map(([value,label]) => `<option value="${value}" ${value === (note?.note_type || 'note') ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label class="field-label">Projeto<select id="domainNoteProject">${domainProjectOptions(note?.project_id || '')}</select></label><label class="field-label full-span">Tags<input id="domainNoteTags" value="${esc((note?.tags || []).join(', '))}" placeholder="Ex.: conteúdo, financeiro, referência"><span class="tag-input-help">Separe as tags por vírgula.</span></label></div>${domainTechnicalDetails(note)}<div class="modal-actions"><div>${note ? '<button id="domainNoteDelete" class="button danger" type="button">Excluir nota</button>' : ''}</div><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="domainNoteSave" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
+  const close = () => { modal.innerHTML = '' }
+  $('closeModal').addEventListener('click', close); $('cancelModal').addEventListener('click', close)
+  $('domainNoteForm').addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const title = $('domainNoteTitle').value.trim(), content = $('domainNoteContent').value.trim()
+    if (!title || !content) return
+    const tags = [...new Set($('domainNoteTags').value.split(',').map((tag) => tag.trim()).filter(Boolean))]
+    const payload = { title, content, note_type: $('domainNoteType').value, tags, project_id: $('domainNoteProject').value || null }
+    await performDomainWrite($('domainNoteSave'), () => note ? domainUpdate(supabase, 'note', note.id, payload) : domainCreate(supabase, 'note', payload), note ? 'Nota atualizada.' : 'Nota criada.')
+  })
+  $('domainNoteDelete')?.addEventListener('click', async () => {
+    if (!confirm(`Excluir definitivamente a nota “${note.title}”?`)) return
+    await performDomainWrite($('domainNoteDelete'), () => domainDelete(supabase, 'note', note.id), 'Nota excluída.')
+  })
 }
 
 function renderNotes() {
   if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
-  const notes = state.jarvis.notes
-  $('mainArea').innerHTML = `<div class="content-stack personal-section">
-    <section class="section-intro"><div><span class="eyebrow">NOTAS & IDEIAS</span><h2>Memória que você consegue encontrar.</h2><p>Ideias, referências e anotações capturadas pelo Jarvis, sem virar uma pilha de mensagens perdidas.</p></div></section>
-    <section class="panel quick-capture"><div><span class="eyebrow">CAPTURA RÁPIDA</span><h3>O que você quer guardar?</h3></div><form id="noteQuickForm"><input id="noteQuickInput" type="text" placeholder="Ex.: ideia de vídeo sobre fluxo de caixa"><button id="noteQuickBtn" class="button primary" type="submit">Guardar</button></form></section>
-    <section class="notes-grid">${notes.length ? notes.map((n) => `<article class="note-card"><div class="note-type">${esc(n.note_type || 'nota')}</div><h3>${esc(n.title || 'Nota')}</h3><p>${esc(n.content || '')}</p><footer><span>${esc(jarvisDateTime(n.created_at,{hour:undefined,minute:undefined}))}</span>${Array.isArray(n.tags) && n.tags.length ? `<small>${n.tags.slice(0,3).map(esc).join(' · ')}</small>` : ''}</footer></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhuma nota ainda.</strong><span>Comece registrando uma ideia acima.</span></div>'}</section>
-  </div>`
-  $('noteQuickForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const input=$('noteQuickInput'); const raw=input.value.trim(); if(!raw)return; if(await sendJarvisQuick(`Jarvis, anota: ${raw}`,$('noteQuickBtn'))) input.value='' })
+  const filters = state.domainUi.note
+  const tags = collectNoteTags(state.jarvis.notes)
+  const notes = filterNotes(state.jarvis.notes, filters)
+  $('mainArea').innerHTML = `<div class="content-stack personal-section domain-section"><section class="section-intro domain-intro"><div><span class="eyebrow">NOTAS & IDEIAS</span><h2>Memória que você consegue encontrar.</h2><p>${state.jarvis.notes.length} registro${state.jarvis.notes.length === 1 ? '' : 's'} real${state.jarvis.notes.length === 1 ? '' : 'is'}, sem status e sem virar tarefa automaticamente.</p></div><button id="domainNewNote" class="button primary" type="button">＋ Nova nota</button></section><section class="panel domain-toolbar"><label class="domain-search">Buscar<input id="noteFilterQ" type="search" value="${esc(filters.q)}" placeholder="Título, conteúdo ou tag"></label><label>Tipo<select id="noteFilterType"><option value="all">Todos</option>${Object.entries(NOTE_TYPE_LABELS).map(([value,label]) => `<option value="${value}" ${filters.type === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Tag<select id="noteFilterTag"><option value="all">Todas</option>${tags.map((tag) => `<option value="${esc(tag)}" ${filters.tag === tag ? 'selected' : ''}>${esc(tag)}</option>`).join('')}</select></label><label>Projeto<select id="noteFilterProject"><option value="all">Todos</option>${state.jarvis.projects.map((project) => `<option value="${esc(project.id)}" ${filters.project === project.id ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}</select></label></section><section class="notes-grid domain-notes-grid">${notes.length ? notes.map((note) => `<article class="note-card domain-note-card"><div class="domain-card-chips">${noteTypeChip(note)}${note.project_id ? `<span class="domain-chip project">${esc(domainProjectName(note.project_id))}</span>` : ''}</div><h3>${esc(note.title)}</h3><p>${esc(note.content)}</p>${Array.isArray(note.tags) && note.tags.length ? `<div class="domain-tags">${note.tags.map((tag) => `<span>${esc(tag)}</span>`).join('')}</div>` : ''}<footer><span>Atualizada ${esc(domainWhen(note.updated_at, ''))}</span><button class="button small" data-note-edit="${esc(note.id)}" type="button">Abrir / editar</button></footer></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhuma nota encontrada.</strong><span>Crie uma nota real ou ajuste os filtros acima.</span></div>'}</section></div>`
+  $('domainNewNote').addEventListener('click', () => openNoteEditor())
+  const bind = (id, key, event = 'change') => $(id).addEventListener(event, () => { filters[key] = $(id).value; renderNotes() })
+  bind('noteFilterQ','q','input'); bind('noteFilterType','type'); bind('noteFilterTag','tag'); bind('noteFilterProject','project')
+  document.querySelectorAll('[data-note-edit]').forEach((button) => button.addEventListener('click', () => openNoteEditor(button.dataset.noteEdit)))
+}
+
+function openProjectEditor(id = null) {
+  const project = id ? state.jarvis.projects.find((item) => item.id === id) : null
+  const modal = $('modalHost')
+  modal.innerHTML = `<div class="modal-backdrop"><form id="domainProjectForm" class="modal wide domain-modal"><div class="modal-head"><div><span class="eyebrow">${project ? 'EDITAR PROJETO' : 'NOVO PROJETO'}</span><h2>${project ? esc(project.name) : 'Criar projeto'}</h2><div class="modal-sub">Um contexto para agrupar trabalho e informação sem duplicar registros.</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="form-grid"><label class="field-label full-span">Nome<input id="domainProjectName" value="${esc(project?.name || '')}" maxlength="180" required></label><label class="field-label full-span">Descrição<textarea id="domainProjectDescription" rows="6">${esc(project?.description || '')}</textarea></label><label class="field-label">Prazo opcional<input id="domainProjectDue" type="datetime-local" value="${esc(domainDateInput(project?.due_at))}"></label>${project ? `<div class="field-label"><span>Status atual</span><div class="domain-current-status">${projectStatusChip(project)}</div></div>` : ''}</div>${domainTechnicalDetails(project)}<div class="modal-actions"><div>${project ? '<button id="domainProjectDelete" class="button danger ghost-danger" type="button">Excluir definitivamente</button>' : ''}</div><div class="modal-actions-right"><button id="cancelModal" class="button" type="button">Cancelar</button><button id="domainProjectSave" class="button primary" type="submit">✓ Salvar</button></div></div></form></div>`
+  const close = () => { modal.innerHTML = '' }
+  $('closeModal').addEventListener('click', close); $('cancelModal').addEventListener('click', close)
+  $('domainProjectForm').addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const name = $('domainProjectName').value.trim()
+    if (!name) return
+    const payload = { name, description: $('domainProjectDescription').value.trim() || null, due_at: domainDateToIso($('domainProjectDue').value) }
+    await performDomainWrite($('domainProjectSave'), () => project ? domainUpdate(supabase, 'project', project.id, payload) : domainCreate(supabase, 'project', payload), project ? 'Projeto atualizado.' : 'Projeto criado.')
+  })
+  $('domainProjectDelete')?.addEventListener('click', async () => {
+    if (!confirm(`Excluir definitivamente o projeto “${project.name}”? Tarefas e notas serão preservadas sem vínculo com ele.`)) return
+    await performDomainWrite($('domainProjectDelete'), () => domainDelete(supabase, 'project', project.id), 'Projeto excluído; tarefas e notas foram preservadas.')
+  })
+}
+
+async function transitionProject(id, action, button) {
+  const messages = { project_pause: 'Projeto pausado.', project_complete: 'Projeto concluído.', project_archive: 'Projeto arquivado.', project_reopen: 'Projeto reativado.' }
+  await performDomainWrite(button, () => domainTransition(supabase, 'project', id, action), messages[action] || 'Projeto atualizado.')
+}
+
+function openProjectDetail(id) {
+  const project = state.jarvis.projects.find((item) => item.id === id)
+  if (!project) return
+  const tasks = state.jarvis.tasks.filter((task) => task.project_id === id)
+  const notes = state.jarvis.notes.filter((note) => note.project_id === id)
+  const modal = $('modalHost')
+  modal.innerHTML = `<div class="modal-backdrop"><div class="modal wide domain-modal"><div class="modal-head"><div><span class="eyebrow">PROJETO</span><h2>${esc(project.name)}</h2><div class="domain-card-chips">${projectStatusChip(project)}</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="project-context"><p>${esc(project.description || 'Sem descrição adicional.')}</p><div class="project-context-stats"><button id="projectTasksLink" type="button"><strong>${tasks.length}</strong><span>Tarefas relacionadas</span></button><button id="projectNotesLink" type="button"><strong>${notes.length}</strong><span>Notas relacionadas</span></button><div><strong>${esc(domainWhen(project.due_at))}</strong><span>Prazo</span></div></div><div class="project-related-preview"><div><strong>Tarefas</strong>${tasks.length ? tasks.slice(0,4).map((task) => `<span>${taskStatusChip(task)} ${esc(task.title)}</span>`).join('') : '<span>Nenhuma tarefa ligada a este projeto.</span>'}</div><div><strong>Notas</strong>${notes.length ? notes.slice(0,4).map((note) => `<span>${noteTypeChip(note)} ${esc(note.title)}</span>`).join('') : '<span>Nenhuma nota ligada a este projeto.</span>'}</div></div></div>${domainTechnicalDetails(project)}<div class="modal-actions"><span></span><div class="modal-actions-right"><button id="projectDetailClose" class="button" type="button">Fechar</button><button id="projectDetailEdit" class="button primary" type="button">Editar projeto</button></div></div></div></div>`
+  const close = () => { modal.innerHTML = '' }
+  $('closeModal').addEventListener('click', close); $('projectDetailClose').addEventListener('click', close)
+  $('projectDetailEdit').addEventListener('click', () => openProjectEditor(id))
+  $('projectTasksLink').addEventListener('click', () => { close(); state.domainUi.task.project = id; state.domainUi.task.status = 'all'; navigate('tasks') })
+  $('projectNotesLink').addEventListener('click', () => { close(); state.domainUi.note.project = id; navigate('notes') })
+}
+
+function projectActionMarkup(project) {
+  if (project.status === 'active') return `<button class="button small" data-project-transition="project_pause" data-id="${esc(project.id)}" type="button">Pausar</button><button class="button small" data-project-transition="project_complete" data-id="${esc(project.id)}" type="button">Concluir</button><button class="button small" data-project-transition="project_archive" data-id="${esc(project.id)}" type="button">Arquivar</button>`
+  if (project.status === 'paused') return `<button class="button small primary" data-project-transition="project_reopen" data-id="${esc(project.id)}" type="button">Reativar</button><button class="button small" data-project-transition="project_complete" data-id="${esc(project.id)}" type="button">Concluir</button><button class="button small" data-project-transition="project_archive" data-id="${esc(project.id)}" type="button">Arquivar</button>`
+  if (project.status === 'completed') return `<button class="button small" data-project-transition="project_reopen" data-id="${esc(project.id)}" type="button">Reativar</button><button class="button small" data-project-transition="project_archive" data-id="${esc(project.id)}" type="button">Arquivar</button>`
+  return `<button class="button small primary" data-project-transition="project_reopen" data-id="${esc(project.id)}" type="button">Reabrir como ativo</button>`
 }
 
 function renderProjects() {
   if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
-  const projects = state.jarvis.projects
-  $('mainArea').innerHTML = `<div class="content-stack personal-section">
-    <section class="section-intro"><div><span class="eyebrow">PROJETOS</span><h2>Planos que ganham contexto.</h2><p>Viagens, trabalho, objetivos e iniciativas podem concentrar tarefas, notas, agenda, arquivos e finanças.</p></div></section>
-    <section class="panel quick-capture"><div><span class="eyebrow">NOVO PROJETO</span><h3>Comece pela intenção.</h3></div><form id="projectQuickForm"><input id="projectQuickInput" type="text" placeholder="Ex.: criar um projeto para a viagem a Buenos Aires"><button id="projectQuickBtn" class="button primary" type="submit">Criar com Jarvis</button></form></section>
-    <section class="projects-grid">${projects.length ? projects.map((p) => `<article class="project-card"><div class="project-mark">◇</div><div><span class="eyebrow">${esc(String(p.status || 'ATIVO').toUpperCase())}</span><h3>${esc(jarvisProjectName(p))}</h3><p>${esc(p.description || p.objective || 'Projeto organizado pelo Jarvis.')}</p><footer><span>Criado ${esc(jarvisDateTime(p.created_at,{hour:undefined,minute:undefined}))}</span></footer></div></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhum projeto estruturado ainda.</strong><span>Crie uma viagem, objetivo ou iniciativa acima.</span></div>'}</section>
-    <section class="project-vision panel"><div><span class="eyebrow">VISÃO 360º</span><h3>Um projeto não será só uma pasta.</h3><p>Na evolução do Jarvis, cada projeto poderá reunir compromissos, tarefas, notas, arquivos do Drive, lugares do Maps e contexto financeiro em uma única linha do tempo.</p></div><div class="project-vision-flow"><span>Agenda</span><b>+</b><span>Tarefas</span><b>+</b><span>Drive</span><b>+</b><span>Lugares</span><b>+</b><span>Finanças</span></div></section>
-  </div>`
-  $('projectQuickForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const input=$('projectQuickInput'); const raw=input.value.trim(); if(!raw)return; if(await sendJarvisQuick(`Jarvis, crie um projeto para ${raw}`,$('projectQuickBtn'))) input.value='' })
+  const filters = state.domainUi.project
+  const projects = filterProjects(state.jarvis.projects, filters)
+  const activeCount = state.jarvis.projects.filter((project) => project.status === 'active').length
+  $('mainArea').innerHTML = `<div class="content-stack personal-section domain-section"><section class="section-intro domain-intro"><div><span class="eyebrow">PROJETOS</span><h2>Contextos que agrupam coisas.</h2><p>${activeCount} projeto${activeCount === 1 ? '' : 's'} ativo${activeCount === 1 ? '' : 's'}. Tarefas e notas continuam sendo registros próprios e apenas se relacionam ao projeto.</p></div><button id="domainNewProject" class="button primary" type="button">＋ Novo projeto</button></section><section class="panel domain-toolbar"><label class="domain-search">Buscar<input id="projectFilterQ" type="search" value="${esc(filters.q)}" placeholder="Nome ou descrição"></label><label>Status<select id="projectFilterStatus"><option value="all">Todos</option>${Object.entries(PROJECT_STATUS_LABELS).map(([value,label]) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Prazo<select id="projectFilterDue"><option value="all">Qualquer prazo</option><option value="overdue" ${filters.due === 'overdue' ? 'selected' : ''}>Vencidos</option><option value="next30" ${filters.due === 'next30' ? 'selected' : ''}>Próximos 30 dias</option><option value="no_due" ${filters.due === 'no_due' ? 'selected' : ''}>Sem prazo</option></select></label></section><section class="projects-grid domain-projects-grid">${projects.length ? projects.map((project) => `<article class="project-card domain-project-card"><div class="project-mark">◇</div><div class="domain-project-body"><div class="domain-card-chips">${projectStatusChip(project)}</div><h3>${esc(project.name)}</h3><p>${esc(project.description || 'Sem descrição adicional.')}</p><div class="domain-card-meta"><span>${esc(domainWhen(project.due_at))}</span><span>${state.jarvis.tasks.filter((task) => task.project_id === project.id).length} tarefas · ${state.jarvis.notes.filter((note) => note.project_id === project.id).length} notas</span></div><div class="domain-card-actions project-actions">${projectActionMarkup(project)}<button class="button small" data-project-open="${esc(project.id)}" type="button">Abrir contexto</button><button class="button small" data-project-edit="${esc(project.id)}" type="button">Editar</button></div></div></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhum projeto encontrado.</strong><span>Crie um projeto real ou ajuste os filtros acima.</span></div>'}</section></div>`
+  $('domainNewProject').addEventListener('click', () => openProjectEditor())
+  const bind = (id, key, event = 'change') => $(id).addEventListener(event, () => { filters[key] = $(id).value; renderProjects() })
+  bind('projectFilterQ','q','input'); bind('projectFilterStatus','status'); bind('projectFilterDue','due')
+  document.querySelectorAll('[data-project-open]').forEach((button) => button.addEventListener('click', () => openProjectDetail(button.dataset.projectOpen)))
+  document.querySelectorAll('[data-project-edit]').forEach((button) => button.addEventListener('click', () => openProjectEditor(button.dataset.projectEdit)))
+  document.querySelectorAll('[data-project-transition]').forEach((button) => button.addEventListener('click', () => transitionProject(button.dataset.id, button.dataset.projectTransition, button)))
 }
 
 function renderJarvis() {
