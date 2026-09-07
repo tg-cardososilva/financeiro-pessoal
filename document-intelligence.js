@@ -1,4 +1,4 @@
-import { documentStatusLabel, documentTypeLabel, shortSummary, documentFieldRows, documentSuggestions } from './document-intelligence-core.js?v=3.6.0'
+import { documentStatusLabel, documentTypeLabel, shortSummary, documentFieldRows, documentSuggestions } from './document-intelligence-core.js?v=3.6.1'
 
 const SUPABASE_URL = 'https://qhpkraqrcvhhtbqjhkmm.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_OXgobfJOCgDy4OP2n_zKgg_tOvEa28F'
@@ -22,7 +22,7 @@ function installStyles() {
   const link = document.createElement('link')
   link.id = 'documentIntelligenceCss'
   link.rel = 'stylesheet'
-  link.href = './document-intelligence.css?v=3.6.0'
+  link.href = './document-intelligence.css?v=3.6.1'
   document.head.appendChild(link)
 }
 
@@ -132,6 +132,7 @@ async function pickerSelection(query = '') {
     return null
   }
   if (!config.worker_ready) throw new Error('Document AI worker ainda não está configurado.')
+  if (!config.root_configured || !config.root_folder_id) throw new Error('A pasta raiz JARVIS não está configurada.')
   if (!config.client_id || !config.developer_key || !config.app_id) throw new Error('Google Picker ainda não está totalmente configurado.')
   await ensurePickerLibraries()
   return new Promise((resolve, reject) => {
@@ -142,6 +143,8 @@ async function pickerSelection(query = '') {
         if (tokenResponse?.error) return reject(new Error(tokenResponse.error_description || tokenResponse.error))
         state.pickerToken = tokenResponse.access_token
         const view = new window.google.picker.DocsView(window.google.picker.ViewId.DOCS)
+          .setParent(config.root_folder_id)
+          .setMode(window.google.picker.DocsViewMode.LIST)
           .setIncludeFolders(false)
           .setSelectFolderEnabled(false)
           .setMimeTypes('application/pdf,image/jpeg,image/png')
@@ -151,7 +154,7 @@ async function pickerSelection(query = '') {
           .setOAuthToken(state.pickerToken)
           .setDeveloperKey(config.developer_key)
           .setAppId(config.app_id)
-          .setTitle('Escolha o documento que o Jarvis pode ler')
+          .setTitle('Escolha um documento em Meu Drive / JARVIS')
           .setCallback((data) => {
             const action = data[window.google.picker.Response.ACTION]
             if (action === window.google.picker.Action.PICKED) {
@@ -291,6 +294,11 @@ function enhanceFilesView() {
     read.textContent = '▧ Ler documento'
     read.addEventListener('click', () => readDocument())
     wrap.appendChild(read)
+    const source = document.createElement('small')
+    source.id = 'driveScopeSource'
+    source.className = 'doc-intel-cost'
+    source.textContent = 'Fonte: Meu Drive / JARVIS'
+    wrap.appendChild(source)
     if (state.cost) {
       const cost = document.createElement('small')
       cost.className = 'doc-intel-cost'
