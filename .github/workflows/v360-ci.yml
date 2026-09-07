@@ -1,0 +1,41 @@
+name: v3.6.0 CI
+
+on:
+  push:
+    branches:
+      - v3.6.0-documentos-inteligentes
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: |
+          node --check app.js
+          node --check attention-rules.js
+          node --check domain-ui.js
+          node --check files-ui.js
+          node --check jarvis-domain-client.js
+          node --check jarvis-files-client.js
+          node --check document-intelligence-core.js
+          node --check document-intelligence.js
+      - name: Regression and v3.6 tests
+        run: |
+          node --test tests/domain-ui.test.mjs tests/files-ui.test.mjs tests/v340b-attention.test.mjs tests/v350-files-client.test.mjs tests/v360-architecture.test.mjs tests/v360-document-intelligence.test.mjs
+      - name: Cloud Run worker syntax
+        run: python3 -m py_compile cloud-run/jarvis-document-ai-worker/server.py
+      - name: Cache-bust and no forbidden scope
+        run: |
+          grep -q 'styles.css?v=3.6.0' index.html
+          grep -q 'app.js?v=3.6.0' index.html
+          grep -q 'document-intelligence.js?v=3.6.0' index.html
+          ! grep -R 'auth/drive.readonly' supabase/functions document-intelligence.js
