@@ -1,4 +1,4 @@
-# Jarvis v3.5.0 - Drive / Arquivos e memoria documental
+# Jarvis v3.6.0 - Documentos Inteligentes
 
 Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
 
@@ -9,6 +9,9 @@ Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
 - `jarvis-domain-client.js`
 - `jarvis-files-client.js`
 - `files-ui.js`
+- `document-intelligence-core.js`
+- `document-intelligence.js`
+- `document-intelligence.css`
 - `styles.css`
 - `jarvis-avatar.png`
 
@@ -76,7 +79,6 @@ Depois de publicar, use `Command + Shift + R`.
 - Testes de frontend cobrem filtros, busca, cliente canonico, `explicit: true`, integracao com `attention-rules.js` e auditoria de carregamento somente leitura.
 - Testes de banco cobrem CRUD e transicoes em transacao revertida, incluindo associacao valida e rejeicao de `project_id` cruzado. Nenhum dado artificial fica persistido.
 
-
 ## v3.5.0
 
 - Google Drive permanece a fonte real dos arquivos; o Supabase armazena apenas metadados e contexto em `jarvis_files`.
@@ -89,3 +91,17 @@ Depois de publicar, use `Command + Shift + R`.
 - Consultas do Jarvis sobre localizacao de arquivos usam somente nome, tipo, projeto, datas e `web_view_link`; nao interpretam conteudo.
 - Falha do Drive fica isolada do restante do painel e nao derruba Home, Projetos ou dados ja sincronizados.
 - OCR, Vision, Document AI, embeddings e leitura semantica permanecem fora do escopo.
+
+## v3.6.0
+
+- `jarvis_files` continua sendo a fonte canonica do arquivo e do contexto; `jarvis_document_processing` guarda somente a interpretacao ligada por `jarvis_file_id`.
+- Google Drive continua indexado com `drive.metadata.readonly`; leitura de conteudo usa somente `drive.file`, nunca `drive.readonly`, e apenas depois de selecao explicita pelo Google Picker.
+- O access token do Picker e efemero, fica somente em memoria do navegador e nao e salvo em URL, banco ou armazenamento local.
+- O backend baixa PDF/JPG/PNG temporariamente em memoria, limite de 20 MB, e nao persiste binarios no Supabase Storage nem no Cloud Storage.
+- O OCR usa Enterprise Document OCR no Document AI, regiao `us`, via worker Cloud Run keyless com service account dedicada e permissao minima.
+- A interpretacao estruturada usa OpenAI Responses API com `store:false` e cobre somente financeiro, contrato/administrativo e viagem.
+- A tela Arquivos ganha estado de processamento, `Ler documento`, resumo, campos extraidos, texto completo recolhido, erro isolado e reprocessamento explicito.
+- Abrir Home, Arquivos, Projetos ou Jarvis nao inicia OCR nem processamento.
+- O Jarvis consulta somente documentos ja processados e nunca cria automaticamente transacao, tarefa, evento ou vinculo derivado.
+- Custos registram paginas OCR e estimativa de preco de tabela para acompanhamento dos primeiros testes reais.
+- Embeddings, busca vetorial, memoria semantica global e processamento automatico em massa continuam fora do escopo.

@@ -10,12 +10,14 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') || '';
 const GOOGLE_REDIRECT_URI = Deno.env.get('GOOGLE_REDIRECT_URI') || `${SUPABASE_URL}/functions/v1/jarvis-google-oauth`;
 const PROVIDER = 'google_drive';
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly';
+const DRIVE_METADATA_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly';
+const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const SCOPES = [
   'openid',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
-  DRIVE_SCOPE,
+  DRIVE_METADATA_SCOPE,
+  DRIVE_FILE_SCOPE,
 ];
 
 function getSecretKey() {
@@ -63,6 +65,12 @@ function authorizationUrl(state: string) {
 }
 
 async function createStateForUser(userId: string) {
+  await admin.from('jarvis_oauth_states')
+    .update({ used_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .eq('provider', PROVIDER)
+    .is('used_at', null);
+
   const state = `${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`;
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
   const { error } = await admin.from('jarvis_oauth_states').insert({
@@ -90,11 +98,9 @@ async function validateState(state: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
-
   try {
     if (!GOOGLE_CLIENT_ID) return json({ error: 'Google OAuth nao configurado.' }, 503);
     const url = new URL(req.url);
-
     if (req.method === 'GET') {
       const state = String(url.searchParams.get('state') || '').trim();
       if (!state) return json({ error: 'State OAuth ausente.' }, 400);
@@ -102,7 +108,6 @@ Deno.serve(async (req) => {
       if (!stateRow) return json({ error: 'State OAuth invalido ou expirado.' }, 400);
       return Response.redirect(authorizationUrl(state), 302);
     }
-
     if (req.method === 'POST') {
       const user = await currentUser(req);
       if (!user) return json({ error: 'Nao autenticado' }, 401);
@@ -116,7 +121,6 @@ Deno.serve(async (req) => {
         expires_at: expiresAt,
       });
     }
-
     return json({ error: 'Metodo nao suportado' }, 405);
   } catch (e) {
     console.error(e);

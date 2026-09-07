@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+
+const processing = fs.readFileSync(new URL('../supabase/functions/jarvis-document-processing/index.ts', import.meta.url), 'utf8')
+const worker = fs.readFileSync(new URL('../cloud-run/jarvis-document-ai-worker/server.py', import.meta.url), 'utf8')
+const frontend = fs.readFileSync(new URL('../document-intelligence.js', import.meta.url), 'utf8')
+const migration = fs.readFileSync(new URL('../supabase/migrations/20260907200123_v360_document_processing.sql', import.meta.url), 'utf8')
+
+assert.match(processing, /drive\.metadata\.readonly/)
+assert.match(processing, /drive\.file/)
+assert.doesNotMatch(processing, /auth\/drive\.readonly/)
+assert.match(processing, /alt=media/)
+assert.match(processing, /explicit_required/)
+assert.match(processing, /store:\s*false/)
+assert.match(processing, /binary_persisted:\s*false/)
+assert.doesNotMatch(processing, /storage\.from\(/)
+assert.doesNotMatch(processing, /financial_annotations|jarvis_tasks|jarvis_actions|jarvis_projects.*insert/i)
+assert.doesNotMatch(worker, /storage\.googleapis\.com|gs:\/\//)
+assert.match(worker, /rawDocument|raw_document|rawDocument/i)
+assert.match(worker, /JARVIS_DOCUMENT_WORKER_SECRET/)
+assert.match(frontend, /initTokenClient/)
+assert.match(frontend, /state\.pickerToken/)
+assert.doesNotMatch(frontend, /localStorage\.setItem\([^\n]*picker/i)
+assert.doesNotMatch(frontend, /refresh_token/i)
+assert.match(frontend, /action:\s*'process',\s*explicit:\s*true/)
+assert.match(frontend, /action:\s*'reprocess',\s*explicit:\s*true/)
+assert.doesNotMatch(frontend, /setTimeout\([^\n]*action:\s*'process'/)
+assert.match(migration, /foreign key \(user_id, jarvis_file_id\)/i)
+assert.match(migration, /enable row level security/i)
+assert.match(migration, /for update[\s\S]*using[\s\S]*with check/i)
+assert.match(migration, /unique \(user_id, jarvis_file_id\)/i)
+
+console.log('v3.6.0 architecture tests ok')
