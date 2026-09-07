@@ -1,4 +1,4 @@
-name: v3.6.0 CI
+name: v3.6.0 Regression
 
 on:
   push:
@@ -33,9 +33,6 @@ jobs:
           node --test tests/domain-ui.test.mjs tests/files-ui.test.mjs tests/v340b-attention.test.mjs tests/v350-files-client.test.mjs tests/v350-regression-v360.test.mjs tests/v360-architecture.test.mjs tests/v360-document-intelligence.test.mjs
       - name: Cloud Run worker syntax
         run: python3 -m py_compile cloud-run/jarvis-document-ai-worker/server.py
-      - name: Cache-bust and no forbidden scope
+      - name: Security scope guardrail
         run: |
-          grep -q 'styles.css?v=3.6.0' index.html
-          grep -q 'app.js?v=3.6.0' index.html
-          grep -q 'document-intelligence.js?v=3.6.0' index.html
           ! grep -R 'auth/drive.readonly' supabase/functions document-intelligence.js

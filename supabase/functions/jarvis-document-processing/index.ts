@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.115.0'
+import { DRIVE_FOLDER_MIME, driveRootConfig, isFileInsideRoot } from './scope-core.js'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -90,6 +91,7 @@ async function driveConnection(userClient: any, userId: string) {
     .maybeSingle()
   if (error) throw error
   if (!data) throw appError('Google Drive nao conectado', 'drive_not_connected', 409)
+  driveRootConfig(data)
   return data
 }
 
@@ -135,18 +137,41 @@ async function driveAccessToken(userClient: any, userId: string, requireFileScop
 }
 
 async function driveFileMetadata(accessToken: string, providerFileId: string) {
-  const fields = 'id,name,mimeType,webViewLink,modifiedTime,size,trashed,capabilities(canDownload)'
-  const params = new URLSearchParams({ fields, supportsAllDrives: 'true' })
+  const fields = 'id,name,mimeType,webViewLink,modifiedTime,size,parents,trashed,driveId,ownedByMe,capabilities(canDownload)'
+  const params = new URLSearchParams({ fields })
   const r = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(providerFileId)}?${params.toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   const payload = await r.json().catch(() => ({}))
-  if (!r.ok) throw appError(payload?.error?.message || `Google Drive ${r.status}`, r.status === 403 ? 'drive_file_access_denied' : 'drive_file_metadata_failed', 502)
+  if (!r.ok) throw appError(payload?.error?.message || `Google Drive ${r.status}`, r.status === 403 || r.status === 404 ? 'drive_file_access_denied' : 'drive_file_metadata_failed', r.status === 403 || r.status === 404 ? 409 : 502)
   if (payload.trashed) throw appError('O arquivo selecionado esta na lixeira do Drive', 'drive_file_trashed', 409)
   return payload
 }
 
-function canonicalFileRow(file: any, userId: string, projectId: string | null = null) {
+async function validateRootFolder(accessToken: string, connection: any) {
+  const root = driveRootConfig(connection)
+  let folder
+  try {
+    folder = await driveFileMetadata(accessToken, root.id)
+  } catch (_) {
+    throw appError('A pasta raiz JARVIS esta inacessivel. O documento nao sera lido e nenhum fallback sera usado.', 'drive_root_inaccessible', 409)
+  }
+  if (folder.trashed || String(folder.mimeType || '') !== DRIVE_FOLDER_MIME || folder.driveId || folder.ownedByMe === false) {
+    throw appError('A pasta raiz configurada nao e uma pasta valida do Meu Drive.', 'drive_root_invalid', 409)
+  }
+  return root
+}
+
+async function assertFileInsideRoot(accessToken: string, connection: any, remote: any) {
+  const root = await validateRootFolder(accessToken, connection)
+  const inside = await isFileInsideRoot(remote, root.id, (id: string) => driveFileMetadata(accessToken, id))
+  if (!inside || String(remote.id) === root.id) {
+    throw appError('Este arquivo esta fora de Meu Drive / JARVIS. Mova-o para a pasta JARVIS ou uma subpasta e tente novamente.', 'drive_file_outside_root', 409)
+  }
+  return root
+}
+
+function canonicalFileRow(file: any, userId: string, rootId: string, projectId: string | null = null) {
   return {
     user_id: userId,
     provider: DRIVE_PROVIDER,
@@ -158,13 +183,18 @@ function canonicalFileRow(file: any, userId: string, projectId: string | null = 
     size_bytes: file.size == null ? null : Number(file.size),
     project_id: projectId,
     source: 'imported',
-    metadata: {},
+    metadata: {
+      drive_scope_mode: 'root_folder_tree',
+      drive_root_folder_id: rootId,
+      drive_parent_id: Array.isArray(file.parents) && file.parents.length ? String(file.parents[0]) : null,
+    },
   }
 }
 
 async function prepareSelectedFile(userClient: any, userId: string, providerFileId: string) {
-  const { accessToken } = await driveAccessToken(userClient, userId, true)
+  const { accessToken, connection } = await driveAccessToken(userClient, userId, true)
   const remote = await driveFileMetadata(accessToken, providerFileId)
+  const root = await assertFileInsideRoot(accessToken, connection, remote)
   if (!SUPPORTED_MIME.has(String(remote.mimeType || ''))) throw appError('Nesta versao, Ler documento aceita PDF, JPG e PNG', 'unsupported_document_mime', 415)
   if (remote.capabilities?.canDownload === false) throw appError('O Google Drive nao permite baixar este arquivo', 'drive_download_not_allowed', 409)
   const size = remote.size == null ? null : Number(remote.size)
@@ -176,7 +206,7 @@ async function prepareSelectedFile(userClient: any, userId: string, providerFile
     .eq('provider_file_id', providerFileId)
     .maybeSingle()
   if (existingError) throw existingError
-  const row = canonicalFileRow(remote, userId, existing?.project_id || null)
+  const row = canonicalFileRow(remote, userId, root.id, existing?.project_id || null)
   const { data, error } = await userClient.from('jarvis_files')
     .upsert(row, { onConflict: 'user_id,provider,provider_file_id' })
     .select('*')
@@ -186,7 +216,7 @@ async function prepareSelectedFile(userClient: any, userId: string, providerFile
 }
 
 async function downloadDriveBytes(accessToken: string, providerFileId: string) {
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(providerFileId)}?alt=media&supportsAllDrives=true`, {
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(providerFileId)}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   if (!r.ok) {
@@ -346,6 +376,10 @@ async function processFile(userClient: any, userId: string, fileId: string) {
   if (!SUPPORTED_MIME.has(String(file.mime_type || ''))) throw appError('Nesta versao, Ler documento aceita PDF, JPG e PNG', 'unsupported_document_mime', 415)
   if (file.size_bytes != null && Number(file.size_bytes) > MAX_BYTES) throw appError('Documento maior que 20 MB', 'document_too_large', 413)
 
+  const { accessToken, connection } = await driveAccessToken(userClient, userId, true)
+  const remote = await driveFileMetadata(accessToken, file.provider_file_id)
+  const root = await assertFileInsideRoot(accessToken, connection, remote)
+
   await userClient.from('jarvis_document_processing').upsert({
     user_id: userId,
     jarvis_file_id: file.id,
@@ -358,13 +392,11 @@ async function processFile(userClient: any, userId: string, fileId: string) {
     processed_at: null,
     error_code: null,
     error_message: null,
-    processing_metadata: { started_at: new Date().toISOString(), source_modified_at: file.modified_at_provider || null },
+    processing_metadata: { started_at: new Date().toISOString(), source_modified_at: file.modified_at_provider || null, drive_root_folder_id: root.id },
   }, { onConflict: 'user_id,jarvis_file_id' })
 
   let ocrText: string | null = null
   try {
-    const { accessToken } = await driveAccessToken(userClient, userId, true)
-    const remote = await driveFileMetadata(accessToken, file.provider_file_id)
     if (remote.capabilities?.canDownload === false) throw appError('O Google Drive nao permite baixar este arquivo', 'drive_download_not_allowed', 409)
     const bytes = await downloadDriveBytes(accessToken, file.provider_file_id)
     const contentSha = await sha256Hex(bytes)
@@ -378,6 +410,7 @@ async function processFile(userClient: any, userId: string, fileId: string) {
       completed_at: now,
       source_modified_at: file.modified_at_provider || null,
       source_sha256: contentSha,
+      drive_root_folder_id: root.id,
       document_ai: {
         processor: worker.processor || null,
         page_count: pageCount,
@@ -417,6 +450,7 @@ async function processFile(userClient: any, userId: string, fileId: string) {
     await markFailed(userClient, userId, file.id, code, message, ocrText, {
       failed_at: new Date().toISOString(),
       source_modified_at: file.modified_at_provider || null,
+      drive_root_folder_id: root.id,
       binary_persisted: false,
     })
     throw e
@@ -460,6 +494,7 @@ Deno.serve(async (req) => {
 
     if (action === 'picker_config') {
       const connection = await driveConnection(userClient, user.id).catch(() => null)
+      const root = connection ? driveRootConfig(connection) : null
       return json({
         ok: true,
         client_id: GOOGLE_CLIENT_ID || null,
@@ -469,6 +504,10 @@ Deno.serve(async (req) => {
         metadata_ready: !!connection && hasScope(connection, DRIVE_METADATA_SCOPE),
         drive_file_ready: !!connection && hasScope(connection, DRIVE_FILE_SCOPE),
         worker_ready: !!WORKER_URL && !!WORKER_SECRET,
+        root_configured: !!root,
+        root_folder_id: root?.id || null,
+        root_folder_name: root?.name || null,
+        drive_scope_mode: root?.mode || null,
       })
     }
     if (action === 'list') return json({ ok: true, items: await listProcessing(userClient, user.id, body) })
