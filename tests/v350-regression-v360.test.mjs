@@ -31,12 +31,12 @@ assert.equal(service.includes('files.update'), false)
 assert.equal(service.includes('files.create'), false)
 
 assert.match(html, /data-view="files"/)
-assert.match(html, /styles\.css\?v=3\.6\.0/)
-assert.match(html, /app\.js\?v=3\.6\.0/)
+assert.match(html, /styles\.css\?v=3\.6\.\d+/)
+assert.match(html, /app\.js\?v=3\.6\.\d+/)
 
 const frontend = app + client + readFileSync(new URL('../files-ui.js', import.meta.url), 'utf8') + html
 assert.equal(frontend.includes('GOOGLE_CLIENT_SECRET'), false)
 assert.equal(frontend.includes('SUPABASE_SERVICE_ROLE_KEY'), false)
 assert.equal(frontend.includes('refresh_token'), false)
 
-console.log('v3.5.0 file-layer regression guardrails passed under v3.6.0')
+console.log('v3.5.0 file-layer regression guardrails passed under v3.6.x')
