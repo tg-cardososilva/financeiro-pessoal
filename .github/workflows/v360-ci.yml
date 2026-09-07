@@ -30,7 +30,7 @@ jobs:
           node --check document-intelligence.js
       - name: Regression and v3.6 tests
         run: |
-          node --test tests/domain-ui.test.mjs tests/files-ui.test.mjs tests/v340b-attention.test.mjs tests/v350-files-client.test.mjs tests/v360-architecture.test.mjs tests/v360-document-intelligence.test.mjs
+          node --test tests/domain-ui.test.mjs tests/files-ui.test.mjs tests/v340b-attention.test.mjs tests/v350-files-client.test.mjs tests/v350-regression-v360.test.mjs tests/v360-architecture.test.mjs tests/v360-document-intelligence.test.mjs
       - name: Cloud Run worker syntax
         run: python3 -m py_compile cloud-run/jarvis-document-ai-worker/server.py
       - name: Cache-bust and no forbidden scope
