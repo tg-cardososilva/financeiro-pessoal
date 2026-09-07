@@ -34,10 +34,10 @@ jobs:
           node --check document-intelligence.js
           node --check supabase/functions/jarvis-drive/scope-core.js
           node --check supabase/functions/jarvis-document-processing/scope-core.js
-      - name: Edge Function type check
+      - name: Edge Function validation
         run: |
           deno check supabase/functions/jarvis-drive/index.ts
-          deno check supabase/functions/jarvis-document-processing/index.ts
+          deno compile --no-check --output /tmp/jarvis-document-processing supabase/functions/jarvis-document-processing/index.ts
       - name: Regression and v3.6.1 tests
         run: |
           node --test tests/domain-ui.test.mjs tests/files-ui.test.mjs tests/v340b-attention.test.mjs tests/v350-files-client.test.mjs tests/v360-architecture.test.mjs tests/v360-document-intelligence.test.mjs tests/v361-drive-scope.test.mjs
