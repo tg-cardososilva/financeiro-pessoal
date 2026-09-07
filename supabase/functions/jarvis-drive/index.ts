@@ -227,7 +227,16 @@ async function syncFiles(userClient, userId) {
     if (pages >= 50 && pageToken) throw Object.assign(new Error('Drive muito grande para uma sincronizacao unica. Nenhum metadado foi removido.'), { status: 413, code: 'drive_sync_page_limit' })
   } while (pageToken)
 
-  const rows = remote.map((file) => normalizeRemoteFile(file, userId))
+  const { data: existing, error: existingError } = await userClient.from('jarvis_files')
+    .select('id,provider_file_id,project_id')
+    .eq('user_id', userId)
+    .eq('provider', PROVIDER)
+  if (existingError) throw existingError
+  const projectByProviderId = new Map((existing || []).map((row) => [row.provider_file_id, row.project_id || null]))
+  const rows = remote.map((file) => ({
+    ...normalizeRemoteFile(file, userId),
+    project_id: projectByProviderId.get(String(file.id)) || null,
+  }))
   for (let i = 0; i < rows.length; i += 500) {
     const chunk = rows.slice(i, i + 500)
     const { error } = await userClient.from('jarvis_files').upsert(chunk, { onConflict: 'user_id,provider,provider_file_id' })
@@ -235,8 +244,6 @@ async function syncFiles(userClient, userId) {
   }
 
   const seen = new Set(rows.map((row) => row.provider_file_id))
-  const { data: existing, error: existingError } = await userClient.from('jarvis_files').select('id,provider_file_id').eq('user_id', userId).eq('provider', PROVIDER)
-  if (existingError) throw existingError
   const staleIds = (existing || []).filter((row) => !seen.has(row.provider_file_id)).map((row) => row.id)
   for (let i = 0; i < staleIds.length; i += 200) {
     const { error } = await userClient.from('jarvis_files').delete().in('id', staleIds.slice(i, i + 200))
