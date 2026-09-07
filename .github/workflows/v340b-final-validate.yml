@@ -1,0 +1,50 @@
+name: v3.4.0b final validation
+
+on:
+  push:
+    branches: [v3.4.0b-operational-modules]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v3.4.0b-operational-modules
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax and pure tests
+        run: |
+          node --check app.js
+          node --check domain-ui.js
+          node --check jarvis-domain-client.js
+          node --experimental-default-type=module tests/domain-ui.test.mjs
+          node --experimental-default-type=module tests/v340b-attention.test.mjs
+          git diff --check
+      - name: Architecture audit
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          app=Path('app.js').read_text()
+          client=Path('jarvis-domain-client.js').read_text()
+          for token in ['remind_at','project_type','project_name','objective','priority || 3']:
+              assert token not in app, token
+          assert "x.status === 'pending'" not in app
+          for table in ['jarvis_tasks','jarvis_notes','jarvis_projects']:
+              assert f"from('{table}')" not in app, table
+              assert f'from("{table}")' not in app, table
+          load=re.search(r'async function loadJarvisData\(force = false\) \{.*?\n\}\n\nasync function loadCalendarData',app,re.S).group(0)
+          for write in ['domainCreate(','domainUpdate(','domainDelete(','domainTransition(']:
+              assert write not in load, write
+          for entity in ['task','note','project']:
+              assert f"domainList(supabase, '{entity}')" in load
+          assert "const write = !['list', 'get'].includes(action)" in client
+          assert "...(write ? { explicit: true } : {})" in client
+          assert "supabase.functions.invoke('jarvis-domain'" in client
+          print('v3.4.0b architecture audit: ok')
+          PY
