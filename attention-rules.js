@@ -107,9 +107,8 @@ function dedupe(items) {
 function taskItems(tasks, now, timezone) {
   const out = []
   for (const task of tasks || []) {
-    if (String(task?.status || '').toLowerCase() !== 'pending') continue
-    const dueRaw = task?.due_at || task?.remind_at
-    const due = toDate(dueRaw)
+    if (String(task?.status || '').toLowerCase() !== 'open') continue
+    const due = toDate(task?.due_at)
     if (!due) continue
     const delta = due.getTime() - now.getTime()
     let urgency = null
