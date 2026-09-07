@@ -1,6 +1,8 @@
-import { buildAttentionItems, attentionSummary, ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=3.4.0b'
-import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=3.4.0b'
-import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=3.4.0b'
+import { buildAttentionItems, attentionSummary, ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=3.5.0'
+import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=3.5.0'
+import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=3.5.0'
+import { fileList, fileSync, fileLinkProject, fileUnlinkProject, fileStatus, fileJarvisQuery } from './jarvis-files-client.js?v=3.5.0'
+import { FILE_TYPE_LABELS, fileTypeLabel, fileIcon, fileSizeLabel, matchesFileFilters } from './files-ui.js?v=3.5.0'
 
 const SUPABASE_URL = 'https://qhpkraqrcvhhtbqjhkmm.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_OXgobfJOCgDy4OP2n_zKgg_tOvEa28F'
@@ -65,6 +67,7 @@ const state = {
   investmentMovementFilter: 'all',
   jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], counts: { annotations: 0, notes: 0, tasks: 0, projects: 0, actions: 0 }, loading: false, loaded: false, engine: null, error: null },
   calendar: { events: [], loading: false, loaded: false, error: null, connected: null, syncedAt: null, displayName: null },
+  files: { items: [], count: 0, loading: false, loaded: false, error: null, integrationError: null, connected: null, displayName: null, truncated: false, filters: { q: '', type: 'all', project: 'all' } },
   attention: { reviewTransactions: [], loading: false, loaded: false, error: null },
   domainUi: {
     task: { q: '', status: 'open', priority: 'all', due: 'all', project: 'all' },
@@ -201,6 +204,13 @@ async function boot() {
       history.replaceState({}, '', location.pathname + location.hash)
       state.jarvis.loaded = false
       setTimeout(() => { navigate('jarvis'); toast(result === 'connected' ? 'Google Calendar conectado ao Jarvis.' : result === 'cancelled' ? 'Conexão com Google cancelada.' : 'Não foi possível conectar o Google Calendar.', result === 'connected' ? 'success' : 'error') }, 120)
+    }
+    if (oauthParams.has('jarvis_google_drive') && state.session) {
+      const result = oauthParams.get('jarvis_google_drive')
+      history.replaceState({}, '', location.pathname + location.hash)
+      state.jarvis.loaded = false
+      state.files.loaded = false
+      setTimeout(() => { navigate('files'); toast(result === 'connected' ? 'Google Drive conectado ao Jarvis.' : result === 'cancelled' ? 'Conexão com Google Drive cancelada.' : 'Não foi possível conectar o Google Drive.', result === 'connected' ? 'success' : 'error') }, 120)
     }
   } catch (err) {
     console.error('Falha ao iniciar Jarvis:', err)
@@ -362,6 +372,7 @@ function navigate(view) {
     tasks: ['Tarefas', 'PENDÊNCIAS & LEMBRETES'],
     notes: ['Notas & Ideias', 'MEMÓRIA & CRIAÇÃO'],
     projects: ['Projetos', 'PLANOS & OBJETIVOS'],
+    files: ['Arquivos', 'DRIVE & MEMÓRIA DOCUMENTAL'],
     overview: ['Visão geral', 'FINANÇAS'],
     transactions: ['Transações', 'FINANÇAS'],
     purchases: ['Compras', 'FINANÇAS'],
@@ -499,6 +510,7 @@ function renderMain() {
   if (state.view === 'tasks') renderTasks()
   if (state.view === 'notes') renderNotes()
   if (state.view === 'projects') renderProjects()
+  if (state.view === 'files') renderFiles()
   if (state.view === 'overview') renderOverview()
   if (state.view === 'transactions') renderTransactions()
   if (state.view === 'purchases') renderPurchases()
@@ -2302,7 +2314,7 @@ function openPasswordResetModal() {
 async function loadJarvisData(force = false) {
   if (!state.session || state.jarvis.loading || (state.jarvis.loaded && !force)) return
   state.jarvis.loading = true
-  if (['jarvis','home','agenda','tasks','notes','projects'].includes(state.view)) renderMain()
+  if (['jarvis','home','agenda','tasks','notes','projects','files'].includes(state.view)) renderMain()
   try {
     const [messages, annotations, notes, tasks, projects, actions, connections] = await Promise.all([
       supabase.from('jarvis_messages').select('*').order('created_at', { ascending: false }).limit(80),
@@ -2338,7 +2350,7 @@ async function loadJarvisData(force = false) {
     toast(state.jarvis.error, 'error')
   } finally {
     state.jarvis.loading = false
-    if (['jarvis','home','agenda','tasks','notes','projects'].includes(state.view)) renderMain()
+    if (['jarvis','home','agenda','tasks','notes','projects','files'].includes(state.view)) renderMain()
   }
 }
 
@@ -2355,12 +2367,17 @@ function jarvisCreatedSummary() {
     ['Contextos financeiros', pending, 'Aguardando conciliação com extratos'],
     ['Notas e ideias', state.jarvis.notes.length, 'Memória estruturada do Jarvis'],
     ['Lembretes', tasks, 'Em aberto'],
+    ['Arquivos', state.files.loaded ? state.files.count : 0, 'Metadados sincronizados do Google Drive'],
     ['Ações para confirmar', actions, 'Agenda e ações externas']
   ]
 }
 
 function jarvisGoogleConnection() {
   return state.jarvis.connections.find((x) => x.provider === 'google_calendar' && x.status === 'connected') || null
+}
+
+function jarvisDriveConnection() {
+  return state.jarvis.connections.find((x) => x.provider === 'google_drive' && x.status === 'connected') || null
 }
 
 function formatJarvisEvent(payload = {}) {
@@ -2515,6 +2532,15 @@ function normalizeJarvisText(value = '') {
   return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
+function shouldUseFileRead(message = '') {
+  const text = normalizeJarvisText(message)
+  const writeIntent = /\b(crie|criar|envie|enviar|suba|subir|upload|edite|editar|apague|apagar|delete|exclua|excluir|mova|mover)\b/.test(text)
+  if (writeIntent) return false
+  const fileNoun = /\b(arquivo|arquivos|drive|pdf|documento|documentos|planilha|planilhas|apresentacao|apresentacoes)\b/.test(text)
+  const queryIntent = /\b(encontre|encontrar|ache|achar|procure|procurar|mostre|mostrar|qual|quais|onde|tenho|ligado|ligados|ligada|ligadas|projeto|sobre)\b/.test(text)
+  return fileNoun && queryIntent
+}
+
 function shouldUseCalendarRead(message = '') {
   const text = normalizeJarvisText(message)
   const writeIntent = /\b(agende|agendar|marque|marcar|crie|criar|adicione|adicionar|cancele|cancelar|remarque|remarcar|mude|mudar|altere|alterar|apague|apagar|remova|remover)\b/.test(text)
@@ -2526,6 +2552,12 @@ function shouldUseCalendarRead(message = '') {
 }
 
 async function invokeJarvisEngine(message, source = 'panel_jarvis') {
+  if (shouldUseFileRead(message)) {
+    try {
+      const data = await fileJarvisQuery(supabase, message)
+      return { data, error: null }
+    } catch (error) { return { data: null, error } }
+  }
   const functionName = shouldUseCalendarRead(message) ? 'jarvis-calendar-query' : 'jarvis-core'
   return supabase.functions.invoke(functionName, { body: { message, channel: 'web', source } })
 }
@@ -2678,6 +2710,7 @@ function homeAgendaGroup(title, events, emptyText) {
 
 function renderHome() {
   if (!state.jarvis.loaded && !state.jarvis.loading) loadJarvisData()
+  if (!state.files.loaded && !state.files.loading) loadFilesData()
   if (state.jarvis.loaded && !state.calendar.loaded && !state.calendar.loading) loadCalendarData()
   if (!state.attention.loaded && !state.attention.loading) loadAttentionData()
   const name = personalDisplayName()
@@ -2695,6 +2728,7 @@ function renderHome() {
   const reviewCount = state.transactions.filter((t) => t.review_status === 'needs_review').length
   const cashBalance = state.accounts.filter((a) => !['credit_card','virtual'].includes(a.account_type)).reduce((sum,a) => sum + (accountBalanceLabel(a).value || 0), 0)
   const google = jarvisGoogleConnection()
+  const drive = jarvisDriveConnection()
   const attentionItems = buildAttentionItems({
     tasks: state.jarvis.tasks,
     actions: state.jarvis.actions,
@@ -2767,7 +2801,7 @@ function renderHome() {
       <div class="integration-strip">
         <div class="integration-tile ${google ? 'connected' : ''}"><span class="integration-logo">31</span><div><strong>Google Calendar</strong><small>${google ? (state.calendar.error ? 'Conectado · leitura com erro' : 'Conectado · leitura real') : 'Não conectado'}</small></div><i>${google && !state.calendar.error ? '✓' : google ? '!' : '○'}</i></div>
         <div class="integration-tile configuring"><span class="integration-logo">WA</span><div><strong>WhatsApp</strong><small>Aguardando número de produção</small></div><i>…</i></div>
-        <div class="integration-tile future"><span class="integration-logo">D</span><div><strong>Google Drive</strong><small>Próxima integração</small></div><i>＋</i></div>
+        <div class="integration-tile ${drive ? 'connected' : 'future'}"><span class="integration-logo">D</span><div><strong>Google Drive</strong><small>${drive ? (state.files.integrationError ? 'Conectado · metadados indisponíveis' : `${state.files.count} metadados no Jarvis`) : 'Não conectado'}</small></div><i>${drive && !state.files.integrationError ? '✓' : drive ? '!' : '○'}</i></div>
         <div class="integration-tile future"><span class="integration-logo">⌖</span><div><strong>Maps / Places</strong><small>Planejado</small></div><i>＋</i></div>
         <div class="integration-tile future"><span class="integration-logo">AI</span><div><strong>Document AI</strong><small>Planejado</small></div><i>＋</i></div>
       </div>
@@ -2779,7 +2813,7 @@ function renderHome() {
     const btn = $('homeRefresh')
     setBusy(btn, true, 'Atualizando')
     try {
-      await Promise.all([loadData(), loadJarvisData(true), loadCalendarData(true), loadAttentionData(true)])
+      await Promise.all([loadData(), loadJarvisData(true), loadCalendarData(true), loadAttentionData(true), loadFilesData(true)])
       toast(state.calendar.error ? 'Home atualizada. O Calendar segue indisponível.' : 'Home atualizada.', state.calendar.error ? 'error' : 'success')
     } finally { setBusy(btn, false) }
   })
@@ -2882,6 +2916,127 @@ function projectStatusChip(project) {
 }
 function noteTypeChip(note) {
   return `<span class="domain-chip note ${esc(note.note_type)}">${esc(NOTE_TYPE_LABELS[note.note_type] || note.note_type)}</span>`
+}
+
+
+async function loadFilesData(force = false) {
+  if (!state.session || state.files.loading || (state.files.loaded && !force)) return
+  state.files.loading = true
+  state.files.error = null
+  state.files.integrationError = null
+  if (['files','projects','jarvis','home'].includes(state.view)) renderMain()
+  try {
+    const all = []
+    let offset = 0
+    let count = 0
+    let pages = 0
+    do {
+      const page = await fileList(supabase, { limit: 200, offset })
+      all.push(...page.items)
+      count = page.count
+      offset += page.items.length
+      pages += 1
+      if (!page.items.length) break
+    } while (offset < count && pages < 25)
+    state.files.items = all
+    state.files.count = count
+    state.files.truncated = all.length < count
+    state.files.loaded = true
+    try {
+      const status = await fileStatus(supabase)
+      state.files.connected = status?.connected === true
+      state.files.displayName = status?.display_name || null
+    } catch (err) {
+      state.files.connected = false
+      state.files.integrationError = humanError(err)
+    }
+  } catch (err) {
+    state.files.items = []
+    state.files.count = 0
+    state.files.error = humanError(err)
+    state.files.loaded = true
+  } finally {
+    state.files.loading = false
+    if (['files','projects','jarvis','home'].includes(state.view)) renderMain()
+  }
+}
+
+function fileProjectName(file) {
+  return file?.project_id ? domainProjectName(file.project_id) : 'Sem projeto'
+}
+
+function fileProjectOptions(selected = '') {
+  return `<option value="">Sem projeto</option>${state.jarvis.projects.map((project) => `<option value="${esc(project.id)}" ${project.id === selected ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}`
+}
+
+function fileTechnicalDetails(file) {
+  if (!file) return ''
+  const metadata = file.metadata && Object.keys(file.metadata).length ? `<div><span>Metadata</span><code>${esc(JSON.stringify(file.metadata))}</code></div>` : ''
+  return `<details class="domain-tech file-tech"><summary>Detalhes técnicos</summary><div><span>Provedor</span><strong>Google Drive</strong></div><div><span>ID no provedor</span><code>${esc(file.provider_file_id || '')}</code></div><div><span>MIME type</span><code>${esc(file.mime_type || '')}</code></div><div><span>ID local</span><code>${esc(file.id || '')}</code></div><div><span>Origem</span><strong>${esc(SOURCE_LABELS[file.source] || file.source || 'Importado')}</strong></div><div><span>Criado</span><strong>${esc(domainWhen(file.created_at, ''))}</strong></div><div><span>Atualizado</span><strong>${esc(domainWhen(file.updated_at, ''))}</strong></div>${metadata}</details>`
+}
+
+async function refreshFiles(message = '') {
+  state.files.loaded = false
+  await loadFilesData(true)
+  if (message) toast(message, 'success')
+}
+
+async function syncFilesExplicit(button) {
+  setBusy(button, true, 'Atualizando')
+  try {
+    const result = await fileSync(supabase)
+    await refreshFiles()
+    toast(`${result.synced || 0} arquivo(s) sincronizado(s) · ${result.removed || 0} metadado(s) removido(s).`, 'success')
+  } catch (err) {
+    state.files.integrationError = humanError(err)
+    toast(state.files.integrationError, 'error')
+  } finally { setBusy(button, false) }
+}
+
+function openFileDetail(id) {
+  const file = state.files.items.find((item) => item.id === id)
+  if (!file) return
+  const modal = $('modalHost')
+  modal.innerHTML = `<div class="modal-backdrop"><div class="modal wide domain-modal file-modal"><div class="modal-head"><div><span class="eyebrow">GOOGLE DRIVE</span><h2>${esc(file.name)}</h2><div class="domain-card-chips"><span class="domain-chip note">${esc(fileTypeLabel(file))}</span>${file.project_id ? `<span class="domain-chip project">${esc(fileProjectName(file))}</span>` : ''}</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="file-detail-grid"><div><span>Modificado no Drive</span><strong>${esc(domainWhen(file.modified_at_provider, 'Não informado'))}</strong></div><div><span>Tamanho</span><strong>${esc(fileSizeLabel(file.size_bytes))}</strong></div><div><span>Origem</span><strong>Google Drive</strong></div></div><label class="field-label">Projeto relacionado<select id="fileProjectSelect">${fileProjectOptions(file.project_id || '')}</select></label><p class="muted file-link-copy">O vínculo altera somente o contexto no Jarvis. O arquivo continua pertencendo ao Google Drive.</p>${fileTechnicalDetails(file)}<div class="modal-actions"><span>${file.web_view_link ? `<a class="button" href="${esc(file.web_view_link)}" target="_blank" rel="noopener noreferrer">Abrir no Drive ↗</a>` : ''}</span><div class="modal-actions-right"><button id="fileDetailClose" class="button" type="button">Fechar</button><button id="fileProjectSave" class="button primary" type="button">Salvar vínculo</button></div></div></div></div>`
+  const close = () => { modal.innerHTML = '' }
+  $('closeModal').addEventListener('click', close)
+  $('fileDetailClose').addEventListener('click', close)
+  $('fileProjectSave').addEventListener('click', async () => {
+    const btn = $('fileProjectSave')
+    const projectId = $('fileProjectSelect').value || null
+    setBusy(btn, true, 'Salvando')
+    try {
+      if (projectId) await fileLinkProject(supabase, file.id, projectId)
+      else await fileUnlinkProject(supabase, file.id)
+      close()
+      await refreshFiles(projectId ? 'Arquivo vinculado ao projeto.' : 'Arquivo desvinculado do projeto.')
+    } catch (err) {
+      toast(humanError(err), 'error')
+      setBusy(btn, false)
+    }
+  })
+}
+
+function renderFiles() {
+  if (!state.jarvis.loaded && !state.jarvis.loading) loadJarvisData()
+  if (!state.files.loaded && !state.files.loading) loadFilesData()
+  if ((!state.jarvis.loaded && state.jarvis.loading) || (!state.files.loaded && state.files.loading)) {
+    $('mainArea').innerHTML = `<div class="content-stack personal-section">${personalLoading()}<div class="skeleton-block h340"></div></div>`
+    return
+  }
+  const filters = state.files.filters
+  const files = state.files.items.filter((file) => matchesFileFilters(file, filters))
+  const integrationWarning = state.files.integrationError ? `<div class="error-banner file-inline-error"><span>Google Drive indisponível agora: ${esc(state.files.integrationError)}. Os metadados já sincronizados continuam acessíveis.</span></div>` : ''
+  const listError = state.files.error ? `<div class="error-banner file-inline-error"><span>${esc(state.files.error)}</span><button id="filesRetry" type="button">Tentar novamente</button></div>` : ''
+  const empty = state.files.items.length === 0
+    ? `<div class="personal-empty panel file-empty"><strong>Nenhum arquivo sincronizado ainda.</strong><span>A tela abriu em modo somente leitura. Clique em “Atualizar arquivos” para importar somente os metadados do seu Google Drive.</span></div>`
+    : `<div class="personal-empty panel file-empty"><strong>Nenhum arquivo corresponde aos filtros.</strong><span>Ajuste a busca, o tipo ou o projeto.</span></div>`
+  $('mainArea').innerHTML = `<div class="content-stack personal-section domain-section files-section">${integrationWarning}${listError}<section class="section-intro domain-intro"><div><span class="eyebrow">ARQUIVOS</span><h2>Seu Drive, com contexto do Jarvis.</h2><p>${state.files.count} arquivo${state.files.count === 1 ? '' : 's'} conhecido${state.files.count === 1 ? '' : 's'} pelo Jarvis. O Google Drive continua sendo a fonte real; aqui ficam apenas metadados e vínculos.</p></div><button id="filesSync" class="button primary" type="button">↻ Atualizar arquivos</button></section><section class="panel domain-toolbar files-toolbar"><label class="domain-search">Buscar<input id="fileFilterQ" type="search" value="${esc(filters.q)}" placeholder="Nome do arquivo"></label><label>Tipo<select id="fileFilterType">${Object.entries(FILE_TYPE_LABELS).map(([value,label]) => `<option value="${value}" ${filters.type === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Projeto<select id="fileFilterProject"><option value="all" ${filters.project === 'all' ? 'selected' : ''}>Todos</option><option value="none" ${filters.project === 'none' ? 'selected' : ''}>Sem projeto</option>${state.jarvis.projects.map((project) => `<option value="${esc(project.id)}" ${filters.project === project.id ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}</select></label><div class="file-toolbar-status"><span class="mini-status-dot"></span><strong>${state.files.connected === false ? 'Drive com erro' : 'Google Drive conectado'}</strong><small>${esc(state.files.displayName || 'metadata.readonly')}</small></div></section>${state.files.truncated ? '<div class="form-message">A visualização local está limitada aos primeiros 5.000 registros. A API continua paginada.</div>' : ''}<section class="files-list">${files.length ? files.map((file) => `<article class="file-row"><div class="file-kind ${esc(fileIcon(file).toLowerCase())}">${esc(fileIcon(file))}</div><div class="file-main"><strong title="${esc(file.name)}">${esc(file.name)}</strong><span>${esc(fileTypeLabel(file))} · modificado ${esc(domainWhen(file.modified_at_provider, 'sem data'))}</span></div><div class="file-project"><small>Projeto</small><strong>${esc(fileProjectName(file))}</strong></div><div class="file-origin"><small>Origem</small><strong>Google Drive</strong></div><div class="file-actions">${file.web_view_link ? `<a class="button small" href="${esc(file.web_view_link)}" target="_blank" rel="noopener noreferrer">Abrir ↗</a>` : ''}<button class="button small" data-file-detail="${esc(file.id)}" type="button">Detalhes</button></div></article>`).join('') : empty}</section></div>`
+  $('filesSync')?.addEventListener('click', () => syncFilesExplicit($('filesSync')))
+  $('filesRetry')?.addEventListener('click', () => loadFilesData(true))
+  const bind = (id, key) => $(id)?.addEventListener('change', () => { filters[key] = $(id).value; renderFiles() })
+  bind('fileFilterQ', 'q'); bind('fileFilterType', 'type'); bind('fileFilterProject', 'project')
+  document.querySelectorAll('[data-file-detail]').forEach((button) => button.addEventListener('click', () => openFileDetail(button.dataset.fileDetail)))
 }
 
 function openTaskEditor(id = null) {
@@ -3005,13 +3160,15 @@ function openProjectDetail(id) {
   if (!project) return
   const tasks = state.jarvis.tasks.filter((task) => task.project_id === id)
   const notes = state.jarvis.notes.filter((note) => note.project_id === id)
+  const files = state.files.items.filter((file) => file.project_id === id)
   const modal = $('modalHost')
-  modal.innerHTML = `<div class="modal-backdrop"><div class="modal wide domain-modal"><div class="modal-head"><div><span class="eyebrow">PROJETO</span><h2>${esc(project.name)}</h2><div class="domain-card-chips">${projectStatusChip(project)}</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="project-context"><p>${esc(project.description || 'Sem descrição adicional.')}</p><div class="project-context-stats"><button id="projectTasksLink" type="button"><strong>${tasks.length}</strong><span>Tarefas relacionadas</span></button><button id="projectNotesLink" type="button"><strong>${notes.length}</strong><span>Notas relacionadas</span></button><div><strong>${esc(domainWhen(project.due_at))}</strong><span>Prazo</span></div></div><div class="project-related-preview"><div><strong>Tarefas</strong>${tasks.length ? tasks.slice(0,4).map((task) => `<span>${taskStatusChip(task)} ${esc(task.title)}</span>`).join('') : '<span>Nenhuma tarefa ligada a este projeto.</span>'}</div><div><strong>Notas</strong>${notes.length ? notes.slice(0,4).map((note) => `<span>${noteTypeChip(note)} ${esc(note.title)}</span>`).join('') : '<span>Nenhuma nota ligada a este projeto.</span>'}</div></div></div>${domainTechnicalDetails(project)}<div class="modal-actions"><span></span><div class="modal-actions-right"><button id="projectDetailClose" class="button" type="button">Fechar</button><button id="projectDetailEdit" class="button primary" type="button">Editar projeto</button></div></div></div></div>`
+  modal.innerHTML = `<div class="modal-backdrop"><div class="modal wide domain-modal"><div class="modal-head"><div><span class="eyebrow">PROJETO</span><h2>${esc(project.name)}</h2><div class="domain-card-chips">${projectStatusChip(project)}</div></div><button id="closeModal" class="icon-button" type="button">×</button></div><div class="project-context"><p>${esc(project.description || 'Sem descrição adicional.')}</p><div class="project-context-stats"><button id="projectTasksLink" type="button"><strong>${tasks.length}</strong><span>Tarefas relacionadas</span></button><button id="projectNotesLink" type="button"><strong>${notes.length}</strong><span>Notas relacionadas</span></button><button id="projectFilesLink" type="button"><strong>${files.length}</strong><span>Arquivos relacionados</span></button><div><strong>${esc(domainWhen(project.due_at))}</strong><span>Prazo</span></div></div><div class="project-related-preview"><div><strong>Tarefas</strong>${tasks.length ? tasks.slice(0,4).map((task) => `<span>${taskStatusChip(task)} ${esc(task.title)}</span>`).join('') : '<span>Nenhuma tarefa ligada a este projeto.</span>'}</div><div><strong>Notas</strong>${notes.length ? notes.slice(0,4).map((note) => `<span>${noteTypeChip(note)} ${esc(note.title)}</span>`).join('') : '<span>Nenhuma nota ligada a este projeto.</span>'}</div><div><strong>Arquivos</strong>${files.length ? files.slice(0,4).map((file) => `<span><span class="domain-chip note">${esc(fileTypeLabel(file))}</span> ${esc(file.name)}</span>`).join('') : '<span>Nenhum arquivo ligado a este projeto.</span>'}</div></div></div>${domainTechnicalDetails(project)}<div class="modal-actions"><span></span><div class="modal-actions-right"><button id="projectDetailClose" class="button" type="button">Fechar</button><button id="projectDetailEdit" class="button primary" type="button">Editar projeto</button></div></div></div></div>`
   const close = () => { modal.innerHTML = '' }
   $('closeModal').addEventListener('click', close); $('projectDetailClose').addEventListener('click', close)
   $('projectDetailEdit').addEventListener('click', () => openProjectEditor(id))
   $('projectTasksLink').addEventListener('click', () => { close(); state.domainUi.task.project = id; state.domainUi.task.status = 'all'; navigate('tasks') })
   $('projectNotesLink').addEventListener('click', () => { close(); state.domainUi.note.project = id; navigate('notes') })
+  $('projectFilesLink').addEventListener('click', () => { close(); state.files.filters.project = id; navigate('files') })
 }
 
 function projectActionMarkup(project) {
@@ -3023,10 +3180,11 @@ function projectActionMarkup(project) {
 
 function renderProjects() {
   if (!state.jarvis.loaded && !state.jarvis.loading) { loadJarvisData(); $('mainArea').innerHTML = personalLoading(); return }
+  if (!state.files.loaded && !state.files.loading) loadFilesData()
   const filters = state.domainUi.project
   const projects = filterProjects(state.jarvis.projects, filters)
   const activeCount = state.jarvis.projects.filter((project) => project.status === 'active').length
-  $('mainArea').innerHTML = `<div class="content-stack personal-section domain-section"><section class="section-intro domain-intro"><div><span class="eyebrow">PROJETOS</span><h2>Contextos que agrupam coisas.</h2><p>${activeCount} projeto${activeCount === 1 ? '' : 's'} ativo${activeCount === 1 ? '' : 's'}. Tarefas e notas continuam sendo registros próprios e apenas se relacionam ao projeto.</p></div><button id="domainNewProject" class="button primary" type="button">＋ Novo projeto</button></section><section class="panel domain-toolbar"><label class="domain-search">Buscar<input id="projectFilterQ" type="search" value="${esc(filters.q)}" placeholder="Nome ou descrição"></label><label>Status<select id="projectFilterStatus"><option value="all">Todos</option>${Object.entries(PROJECT_STATUS_LABELS).map(([value,label]) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Prazo<select id="projectFilterDue"><option value="all">Qualquer prazo</option><option value="overdue" ${filters.due === 'overdue' ? 'selected' : ''}>Vencidos</option><option value="next30" ${filters.due === 'next30' ? 'selected' : ''}>Próximos 30 dias</option><option value="no_due" ${filters.due === 'no_due' ? 'selected' : ''}>Sem prazo</option></select></label></section><section class="projects-grid domain-projects-grid">${projects.length ? projects.map((project) => `<article class="project-card domain-project-card"><div class="project-mark">◇</div><div class="domain-project-body"><div class="domain-card-chips">${projectStatusChip(project)}</div><h3>${esc(project.name)}</h3><p>${esc(project.description || 'Sem descrição adicional.')}</p><div class="domain-card-meta"><span>${esc(domainWhen(project.due_at))}</span><span>${state.jarvis.tasks.filter((task) => task.project_id === project.id).length} tarefas · ${state.jarvis.notes.filter((note) => note.project_id === project.id).length} notas</span></div><div class="domain-card-actions project-actions">${projectActionMarkup(project)}<button class="button small" data-project-open="${esc(project.id)}" type="button">Abrir contexto</button><button class="button small" data-project-edit="${esc(project.id)}" type="button">Editar</button></div></div></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhum projeto encontrado.</strong><span>Crie um projeto real ou ajuste os filtros acima.</span></div>'}</section></div>`
+  $('mainArea').innerHTML = `<div class="content-stack personal-section domain-section"><section class="section-intro domain-intro"><div><span class="eyebrow">PROJETOS</span><h2>Contextos que agrupam coisas.</h2><p>${activeCount} projeto${activeCount === 1 ? '' : 's'} ativo${activeCount === 1 ? '' : 's'}. Tarefas e notas continuam sendo registros próprios e apenas se relacionam ao projeto.</p></div><button id="domainNewProject" class="button primary" type="button">＋ Novo projeto</button></section><section class="panel domain-toolbar"><label class="domain-search">Buscar<input id="projectFilterQ" type="search" value="${esc(filters.q)}" placeholder="Nome ou descrição"></label><label>Status<select id="projectFilterStatus"><option value="all">Todos</option>${Object.entries(PROJECT_STATUS_LABELS).map(([value,label]) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Prazo<select id="projectFilterDue"><option value="all">Qualquer prazo</option><option value="overdue" ${filters.due === 'overdue' ? 'selected' : ''}>Vencidos</option><option value="next30" ${filters.due === 'next30' ? 'selected' : ''}>Próximos 30 dias</option><option value="no_due" ${filters.due === 'no_due' ? 'selected' : ''}>Sem prazo</option></select></label></section><section class="projects-grid domain-projects-grid">${projects.length ? projects.map((project) => `<article class="project-card domain-project-card"><div class="project-mark">◇</div><div class="domain-project-body"><div class="domain-card-chips">${projectStatusChip(project)}</div><h3>${esc(project.name)}</h3><p>${esc(project.description || 'Sem descrição adicional.')}</p><div class="domain-card-meta"><span>${esc(domainWhen(project.due_at))}</span><span>${state.jarvis.tasks.filter((task) => task.project_id === project.id).length} tarefas · ${state.jarvis.notes.filter((note) => note.project_id === project.id).length} notas · ${state.files.items.filter((file) => file.project_id === project.id).length} arquivos</span></div><div class="domain-card-actions project-actions">${projectActionMarkup(project)}<button class="button small" data-project-open="${esc(project.id)}" type="button">Abrir contexto</button><button class="button small" data-project-edit="${esc(project.id)}" type="button">Editar</button></div></div></article>`).join('') : '<div class="personal-empty panel"><strong>Nenhum projeto encontrado.</strong><span>Crie um projeto real ou ajuste os filtros acima.</span></div>'}</section></div>`
   $('domainNewProject').addEventListener('click', () => openProjectEditor())
   const bind = (id, key, event = 'change') => $(id).addEventListener(event, () => { filters[key] = $(id).value; renderProjects() })
   bind('projectFilterQ','q'); bind('projectFilterStatus','status'); bind('projectFilterDue','due')
@@ -3036,6 +3194,7 @@ function renderProjects() {
 }
 
 function renderJarvis() {
+  if (!state.files.loaded && !state.files.loading) loadFilesData()
   if (!state.jarvis.loaded && !state.jarvis.loading) {
     $('mainArea').innerHTML = `<div class="content-stack">${personalLoading()}<div class="skeleton-block h340"></div></div>`
     loadJarvisData()
@@ -3045,13 +3204,14 @@ function renderJarvis() {
   const hasOpenAI = state.jarvis.engine === 'openai' || messages.some((m) => m.raw_data?.engine === 'openai')
   const cards = jarvisCreatedSummary()
   const google = jarvisGoogleConnection()
+  const drive = jarvisDriveConnection()
   const calendarActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && ['proposed','failed'].includes(x.status))
   const pendingActions = state.jarvis.actions.filter((x) => x.status === 'proposed').length
   const loadError = state.jarvis.error ? `<div class="error-banner jarvis-load-error" role="alert"><span>${esc(state.jarvis.error)}</span><button id="jarvisRetryLoad" type="button">Tentar novamente</button></div>` : ''
   $('mainArea').innerHTML = `<div class="content-stack jarvis-view jarvis-v3-view">
     ${loadError}
     <section class="jarvis-hero jarvis-v3-hero jarvis-hero-with-face">
-      <div class="jarvis-hero-copy"><span class="eyebrow">SEU ASSISTENTE PESSOAL</span><h2>Converse. O Jarvis organiza o resto.</h2><p>Uma única conversa para consultar seu ambiente, registrar contexto, preparar ações e conectar agenda, finanças, projetos e, em breve, WhatsApp, Drive e lugares.</p><div class="jarvis-statuses"><span class="jarvis-status ${hasOpenAI ? 'online' : 'local'}"><i></i>${hasOpenAI ? 'IA conectada' : 'IA disponível'}</span><span class="jarvis-status ${google ? 'online' : 'waiting'}"><i></i>Calendar ${google ? 'conectado' : 'pendente'}</span><span class="jarvis-status waiting"><i></i>WhatsApp em produção</span></div></div>
+      <div class="jarvis-hero-copy"><span class="eyebrow">SEU ASSISTENTE PESSOAL</span><h2>Converse. O Jarvis organiza o resto.</h2><p>Uma única conversa para consultar seu ambiente, registrar contexto, preparar ações e conectar agenda, finanças, projetos e, em breve, WhatsApp, Drive e lugares.</p><div class="jarvis-statuses"><span class="jarvis-status ${hasOpenAI ? 'online' : 'local'}"><i></i>${hasOpenAI ? 'IA conectada' : 'IA disponível'}</span><span class="jarvis-status ${google ? 'online' : 'waiting'}"><i></i>Calendar ${google ? 'conectado' : 'pendente'}</span><span class="jarvis-status ${drive ? 'online' : 'waiting'}"><i></i>Drive ${drive ? 'conectado' : 'pendente'}</span><span class="jarvis-status waiting"><i></i>WhatsApp em produção</span></div></div>
       ${jarvisPresenceMarkup(pendingActions ? 'attention' : 'idle', 'hero')}
     </section>
     <section class="jarvis-layout jarvis-v3-layout">
@@ -3065,6 +3225,7 @@ function renderJarvis() {
           <button type="button" data-jarvis-prompt="Jarvis, quanto eu gastei este mês e o que merece atenção?">Finanças</button>
           <button type="button" data-jarvis-prompt="Jarvis, me mostra minhas últimas ideias e notas.">Notas</button>
           <button type="button" data-jarvis-prompt="Jarvis, quais projetos estão ativos?">Projetos</button>
+          <button type="button" data-jarvis-prompt="Jarvis, encontre o PDF com contrato.">Arquivos</button>
         </div>
         <form id="jarvisForm" class="jarvis-composer">
           <textarea id="jarvisInput" rows="2" maxlength="2000" placeholder="Fale com o Jarvis..."></textarea>
@@ -3081,7 +3242,7 @@ function renderJarvis() {
           <div class="panel-head"><div><h2>Integrações</h2><p>Um assistente, vários canais e serviços.</p></div></div>
           <div class="compact-integration ${google ? 'connected' : ''}"><span>31</span><div><strong>Google Calendar</strong><small>${google ? esc(google.display_name || 'Conectado') : 'Não conectado'}</small></div>${google ? '<b>✓</b>' : '<button id="jarvisGoogleConnect" class="button small" type="button">Conectar</button>'}</div>
           <div class="compact-integration configuring"><span>WA</span><div><strong>WhatsApp</strong><small>Número dedicado aguardando ativação</small></div><b>…</b></div>
-          <div class="compact-integration future"><span>D</span><div><strong>Google Drive</strong><small>Próxima integração</small></div><b>＋</b></div>
+          <div class="compact-integration ${drive ? 'connected' : 'future'}"><span>D</span><div><strong>Google Drive</strong><small>${drive ? `${state.files.count} metadados sincronizados` : 'Não conectado'}</small></div><b>${drive ? '✓' : '○'}</b></div>
         </section>
         <section class="panel"><div class="panel-head"><div><h2>Memória estruturada</h2><p>O que já existe por trás da conversa.</p></div></div><div class="jarvis-metric-list">${cards.map(([label,value,sub]) => `<div><span>${esc(label)}</span><strong>${value}</strong><small>${esc(sub)}</small></div>`).join('')}</div></section>
         <section class="panel jarvis-rules"><span class="eyebrow">COMO O JARVIS AGE</span><h3>Conversa primeiro. Ação com contexto.</h3><p>Notas, ideias e contexto financeiro podem ser registrados diretamente. Ações externas sensíveis continuam pedindo confirmação.</p><div><span>Painel</span><b>Central visual</b></div><div><span>WhatsApp</span><b>Canal móvel</b></div><div><span>Dados</span><b>Mesmo núcleo</b></div></section>

@@ -1,4 +1,4 @@
-# Jarvis v3.4.0b - Tarefas, Notas e Projetos operacionais
+# Jarvis v3.5.0 - Drive / Arquivos e memoria documental
 
 Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
 
@@ -7,6 +7,8 @@ Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
 - `attention-rules.js`
 - `domain-ui.js`
 - `jarvis-domain-client.js`
+- `jarvis-files-client.js`
+- `files-ui.js`
 - `styles.css`
 - `jarvis-avatar.png`
 
@@ -73,3 +75,17 @@ Depois de publicar, use `Command + Shift + R`.
 - O frontend deixa de depender de `pending`, prioridade numerica, `remind_at`, `project_type`, `target_date` ou outros campos legados destes dominios.
 - Testes de frontend cobrem filtros, busca, cliente canonico, `explicit: true`, integracao com `attention-rules.js` e auditoria de carregamento somente leitura.
 - Testes de banco cobrem CRUD e transicoes em transacao revertida, incluindo associacao valida e rejeicao de `project_id` cruzado. Nenhum dado artificial fica persistido.
+
+
+## v3.5.0
+
+- Google Drive permanece a fonte real dos arquivos; o Supabase armazena apenas metadados e contexto em `jarvis_files`.
+- OAuth permanece separado por `provider = google_drive`, limitado a `drive.metadata.readonly`; Calendar nao foi ampliado nem misturado.
+- `jarvis_files` usa `UNIQUE (user_id, provider, provider_file_id)`, FK composta de ownership para Projetos, `ON DELETE SET NULL`, RLS completa e trigger de `updated_at`.
+- `jarvis-drive` e a camada canonica para metadados: leitura remota, busca, paginacao, refresh de token, sincronizacao idempotente e vinculo/desvinculo de projeto.
+- A tela Arquivos abre somente lendo metadados ja sincronizados. A sincronizacao com o Drive acontece apenas no clique explicito em `Atualizar arquivos`.
+- Nenhuma rota de download, upload, edicao, exclusao ou leitura de conteudo do Drive existe nesta versao.
+- Projetos exibem os mesmos registros canonicos de `jarvis_files`; nao existe tabela paralela de arquivos por projeto.
+- Consultas do Jarvis sobre localizacao de arquivos usam somente nome, tipo, projeto, datas e `web_view_link`; nao interpretam conteudo.
+- Falha do Drive fica isolada do restante do painel e nao derruba Home, Projetos ou dados ja sincronizados.
+- OCR, Vision, Document AI, embeddings e leitura semantica permanecem fora do escopo.
