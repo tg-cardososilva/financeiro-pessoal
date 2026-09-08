@@ -1,0 +1,61 @@
+name: v3.6.2 CI
+
+on:
+  push:
+    branches:
+      - v3.6.2-security-hardening
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Git diff check
+        run: |
+          git fetch origin main
+          git diff --check origin/main...HEAD
+
+      - name: JavaScript syntax
+        run: |
+          node --check app.js
+          node --check attention-rules.js
+          node --check domain-ui.js
+          node --check files-ui.js
+          node --check jarvis-domain-client.js
+          node --check jarvis-files-client.js
+          node --check document-intelligence-core.js
+          node --check document-intelligence.js
+
+      - name: Migration guardrails
+        run: |
+          migration='supabase/migrations/20260908112101_v362_optimize_legacy_owner_rls.sql'
+          test -f "$migration"
+          test "$(grep -ci '^alter policy ' "$migration")" -eq 20
+          grep -qi 'to authenticated' "$migration"
+          grep -qi '(select auth.uid())' "$migration"
+          ! grep -Eiq '^[[:space:]]*(insert|update|delete|truncate|drop)[[:space:]]' "$migration"
+          ! grep -Eiq '\bto[[:space:]]+anon\b' "$migration"
+
+      - name: Regression and v3.6.2 tests
+        run: |
+          node --test tests/domain-ui.test.mjs tests/files-ui.test.mjs tests/v340b-attention.test.mjs tests/v350-files-client.test.mjs tests/v350-regression-v360.test.mjs tests/v360-architecture.test.mjs tests/v360-document-intelligence.test.mjs tests/v361-drive-scope.test.mjs tests/v362-security-hardening.test.mjs
+
+      - name: Frontend and secret guardrails
+        run: |
+          grep -q 'styles.css?v=3.6.1' index.html
+          grep -q 'app.js?v=3.6.1' index.html
+          grep -q 'document-intelligence.js?v=3.6.1' index.html
+          ! grep -q '?v=3.6.2' index.html
+          ! grep -E 'SUPABASE_SERVICE_ROLE_KEY|GOOGLE_CLIENT_SECRET|OPENAI_API_KEY|JARVIS_DOCUMENT_WORKER_SECRET|WHATSAPP_ACCESS_TOKEN' app.js document-intelligence.js
