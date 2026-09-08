@@ -1,0 +1,88 @@
+name: v3.6.3 CI
+
+on:
+  push:
+    branches:
+      - v3.6.3-whatsapp-hardening
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Diff whitespace check
+        run: git diff --check origin/main...HEAD
+
+      - name: Syntax and Edge Function validation
+        run: |
+          node --check supabase/functions/jarvis-whatsapp-webhook/security.mjs
+          node --check supabase/functions/jarvis-whatsapp-webhook/webhook-core.mjs
+          node --check tests/v363-whatsapp-hardening.test.mjs
+          deno check supabase/functions/jarvis-whatsapp-webhook/index.ts
+
+      - name: WhatsApp hardening tests
+        run: node --test tests/v363-whatsapp-hardening.test.mjs
+
+      - name: Security guardrails
+        run: |
+          grep -q 'WHATSAPP_VERIFY_TOKEN' supabase/functions/jarvis-whatsapp-webhook/index.ts
+          grep -q 'WHATSAPP_APP_SECRET' supabase/functions/jarvis-whatsapp-webhook/index.ts
+          grep -q 'x-hub-signature-256' supabase/functions/jarvis-whatsapp-webhook/webhook-core.mjs
+          grep -q 'req.arrayBuffer()' supabase/functions/jarvis-whatsapp-webhook/webhook-core.mjs
+          grep -q 'constantTimeEqualBytes' supabase/functions/jarvis-whatsapp-webhook/security.mjs
+          grep -q '7 days' supabase/migrations/20260908114911_v363_whatsapp_webhook_idempotency.sql
+          grep -q 'revoke all on table public.jarvis_whatsapp_webhook_events from public, anon, authenticated' supabase/migrations/20260908114911_v363_whatsapp_webhook_idempotency.sql
+          ! grep -R 'WA_WEBHOOK_PAYLOAD' supabase/functions/jarvis-whatsapp-webhook
+          ! grep -R 'display_phone_number' supabase/functions/jarvis-whatsapp-webhook
+          ! grep -R 'recipient_id' supabase/functions/jarvis-whatsapp-webhook
+          ! grep -R 'wa_id' supabase/functions/jarvis-whatsapp-webhook
+          ! grep -R 'text?.body' supabase/functions/jarvis-whatsapp-webhook
+
+      - name: Live webhook fail-closed probe
+        run: |
+          endpoint='https://qhpkraqrcvhhtbqjhkmm.supabase.co/functions/v1/jarvis-whatsapp-webhook'
+          post_status="$(curl -sS -o /tmp/wa-post.out -w '%{http_code}' -X POST "$endpoint" \
+            -H 'Content-Type: application/json' \
+            -H 'X-Hub-Signature-256: sha256=0000000000000000000000000000000000000000000000000000000000000000' \
+            --data '{}')"
+          if [ "$post_status" = '503' ]; then
+            echo 'WHATSAPP_APP_SECRET is not configured in Supabase Edge Function Secrets.'
+            cat /tmp/wa-post.out
+            exit 1
+          fi
+          test "$post_status" = '401'
+          grep -q 'signature_invalid' /tmp/wa-post.out
+
+          get_status="$(curl -sS -o /tmp/wa-get.out -w '%{http_code}' "$endpoint?hub.mode=subscribe&hub.verify_token=definitely-wrong-v363&hub.challenge=test")"
+          test "$get_status" = '403'
+
+      - name: No frontend or activation changes
+        run: |
+          changed="$(git diff --name-only origin/main...HEAD)"
+          if printf '%s\n' "$changed" | grep -Eq '^(index.html|app.js|styles.css|document-intelligence.*|jarvis-files-client.js|jarvis-domain-client.js)$'; then
+            echo 'v3.6.3 must not modify frontend artifacts'
+            exit 1
+          fi
+          ! printf '%s\n' "$changed" | grep -Eq 'jarvis-whatsapp-send'
+
+      - name: Secret leak guardrail
+        run: |
+          files="$(git diff --name-only origin/main...HEAD | tr '\n' ' ')"
+          ! git diff origin/main...HEAD -- $files | grep -E '(^|[^A-Z_])(EAA[A-Za-z0-9]{40,}|sb_secret_[A-Za-z0-9_-]{20,}|-----BEGIN (RSA |EC |)PRIVATE KEY-----)'
