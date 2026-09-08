@@ -29,7 +29,7 @@ export function createWebhookHandler({
   appSecret,
   claimEvent,
   cleanupExpired = async () => {},
-  log = () => {},
+  log = (_level, _event, _fields) => {},
 }) {
   if (typeof claimEvent !== 'function') throw new Error('claimEvent is required')
 
