@@ -55,6 +55,24 @@ jobs:
           ! grep -R 'wa_id' supabase/functions/jarvis-whatsapp-webhook
           ! grep -R 'text?.body' supabase/functions/jarvis-whatsapp-webhook
 
+      - name: Live webhook fail-closed probe
+        run: |
+          endpoint='https://qhpkraqrcvhhtbqjhkmm.supabase.co/functions/v1/jarvis-whatsapp-webhook'
+          post_status="$(curl -sS -o /tmp/wa-post.out -w '%{http_code}' -X POST "$endpoint" \
+            -H 'Content-Type: application/json' \
+            -H 'X-Hub-Signature-256: sha256=0000000000000000000000000000000000000000000000000000000000000000' \
+            --data '{}')"
+          if [ "$post_status" = '503' ]; then
+            echo 'WHATSAPP_APP_SECRET is not configured in Supabase Edge Function Secrets.'
+            cat /tmp/wa-post.out
+            exit 1
+          fi
+          test "$post_status" = '401'
+          grep -q 'signature_invalid' /tmp/wa-post.out
+
+          get_status="$(curl -sS -o /tmp/wa-get.out -w '%{http_code}' "$endpoint?hub.mode=subscribe&hub.verify_token=definitely-wrong-v363&hub.challenge=test")"
+          test "$get_status" = '403'
+
       - name: No frontend or activation changes
         run: |
           changed="$(git diff --name-only origin/main...HEAD)"
