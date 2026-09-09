@@ -390,21 +390,28 @@ function integrationItems(connections, calendarError) {
   return out
 }
 
-export function buildAttentionItems({
-  tasks = [],
-  actions = [],
-  reviewTransactions = [],
-  annotations = [],
-  calendarEvents = [],
-  connections = [],
-  projects = [],
-  documents = [],
-  healthChecks = [],
-  latestFinancialDate = null,
-  calendarError = null,
-  now = new Date(),
-  timezone = 'America/Sao_Paulo',
-} = {}) {
+/**
+ * The attention engine is shared by browser JavaScript and typed Edge Functions.
+ * Keep the boundary intentionally structural: Supabase query result types vary by
+ * caller, while every field is normalized defensively inside the rule functions.
+ * @param {any} [input]
+ */
+export function buildAttentionItems(input = {}) {
+  const {
+    tasks = [],
+    actions = [],
+    reviewTransactions = [],
+    annotations = [],
+    calendarEvents = [],
+    connections = [],
+    projects = [],
+    documents = [],
+    healthChecks = [],
+    latestFinancialDate = null,
+    calendarError = null,
+    now = new Date(),
+    timezone = 'America/Sao_Paulo',
+  } = input
   const ref = toDate(now) || new Date()
   return dedupe([
     ...taskItems(tasks, ref, timezone),
@@ -420,6 +427,7 @@ export function buildAttentionItems({
   ])
 }
 
+/** @param {any[]} [items] */
 export function attentionSummary(items = []) {
   if (!items.length) return 'Seu ambiente está em ordem. Nenhum item real requer atenção agora.'
   const critical = items.filter((x) => x.urgency === 'critical').length
