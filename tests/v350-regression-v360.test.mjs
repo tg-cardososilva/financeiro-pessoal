@@ -31,8 +31,8 @@ assert.equal(service.includes('files.update'), false)
 assert.equal(service.includes('files.create'), false)
 
 assert.match(html, /data-view="files"/)
-assert.match(html, /styles\.css\?v=1\.0\.0-rc\.1/)
-assert.match(html, /app\.js\?v=1\.0\.0-rc\.1/)
+assert.match(html, /styles\.css\?v=1\.0\.0-rc\.2/)
+assert.match(html, /app\.js\?v=1\.0\.0-rc\.2/)
 
 const frontend = app + client + readFileSync(new URL('../files-ui.js', import.meta.url), 'utf8') + html
 assert.equal(frontend.includes('GOOGLE_CLIENT_SECRET'), false)

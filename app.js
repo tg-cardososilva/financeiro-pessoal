@@ -1,8 +1,8 @@
-import { ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=1.0.0-rc.1'
-import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=1.0.0-rc.1'
-import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=1.0.0-rc.1'
-import { fileList, fileSync, fileLinkProject, fileUnlinkProject, fileStatus } from './jarvis-files-client.js?v=1.0.0-rc.1'
-import { FILE_TYPE_LABELS, fileTypeLabel, fileIcon, fileSizeLabel, matchesFileFilters } from './files-ui.js?v=1.0.0-rc.1'
+import { ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=1.0.0-rc.2'
+import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=1.0.0-rc.2'
+import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=1.0.0-rc.2'
+import { fileList, fileSync, fileLinkProject, fileUnlinkProject, fileStatus } from './jarvis-files-client.js?v=1.0.0-rc.2'
+import { FILE_TYPE_LABELS, fileTypeLabel, fileIcon, fileSizeLabel, matchesFileFilters } from './files-ui.js?v=1.0.0-rc.2'
 
 const SUPABASE_URL = 'https://qhpkraqrcvhhtbqjhkmm.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_OXgobfJOCgDy4OP2n_zKgg_tOvEa28F'
