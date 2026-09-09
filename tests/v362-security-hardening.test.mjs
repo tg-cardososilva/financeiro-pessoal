@@ -36,9 +36,9 @@ assert.ok((migration.match(/\(select auth\.uid\(\)\)/g) || []).length >= policie
 assert.doesNotMatch(migration, /^\s*(insert|update|delete|truncate|drop)\b/im)
 assert.doesNotMatch(migration, /\bto\s+anon\b/i)
 
-assert.match(html, /styles\.css\?v=1\.0\.0-rc\.1/)
-assert.match(html, /app\.js\?v=1\.0\.0-rc\.1/)
-assert.match(html, /document-intelligence\.js\?v=1\.0\.0-rc\.1/)
+assert.match(html, /styles\.css\?v=1\.0\.0-rc\.2/)
+assert.match(html, /app\.js\?v=1\.0\.0-rc\.2/)
+assert.match(html, /document-intelligence\.js\?v=1\.0\.0-rc\.2/)
 
 const publicFrontend = `${app}\n${docIntel}`
 for (const secretName of [
