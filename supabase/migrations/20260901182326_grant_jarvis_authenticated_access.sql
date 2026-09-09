@@ -1,0 +1,9 @@
+grant select, insert, update, delete on table public.jarvis_identities to authenticated;
+grant select, insert, update, delete on table public.jarvis_messages to authenticated;
+grant select, insert, update, delete on table public.jarvis_memories to authenticated;
+grant select, insert, update, delete on table public.jarvis_projects to authenticated;
+grant select, insert, update, delete on table public.jarvis_notes to authenticated;
+grant select, insert, update, delete on table public.jarvis_tasks to authenticated;
+grant select, insert, update, delete on table public.jarvis_actions to authenticated;
+grant select, insert, update, delete on table public.jarvis_connections to authenticated;
+grant select, insert, update, delete on table public.financial_annotations to authenticated;

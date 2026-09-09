@@ -1,0 +1,37 @@
+project_id = "qhpkraqrcvhhtbqjhkmm"
+
+[functions.parse-finance-import]
+verify_jwt = true
+[functions.jarvis-core]
+verify_jwt = true
+[functions.jarvis-google-oauth]
+verify_jwt = false
+[functions.jarvis-calendar]
+verify_jwt = true
+[functions.jarvis-whatsapp-send]
+verify_jwt = true
+[functions.jarvis-whatsapp-webhook]
+verify_jwt = false
+[functions.jarvis-calendar-read]
+verify_jwt = true
+[functions.jarvis-calendar-query]
+verify_jwt = true
+[functions.jarvis-domain]
+verify_jwt = true
+[functions.jarvis-google-drive-oauth]
+verify_jwt = false
+[functions.jarvis-drive]
+verify_jwt = true
+[functions.jarvis-document-processing]
+verify_jwt = true
+[functions.jarvis-deliverables]
+verify_jwt = true
+[functions.jarvis-memory]
+verify_jwt = true
+[functions.jarvis-attention]
+verify_jwt = true
+[functions.jarvis-health]
+verify_jwt = true
+[functions.jarvis-whatsapp-identity]
+verify_jwt = true
+

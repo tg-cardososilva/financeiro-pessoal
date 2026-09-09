@@ -1,6 +1,26 @@
-# Jarvis v3.6.0 - Documentos Inteligentes
+# Jarvis 1.0 Release Candidate
 
-Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
+Este repositório contém o candidato web do assistente pessoal Jarvis: painel/PWA, memória e dados no Supabase, agenda no Google Calendar, arquivos/Docs/Sheets no Google Drive, OCR no Document AI e inteligência/orquestração por Edge Functions + OpenAI.
+
+Status oficial enquanto o número Meta permanecer pendente: **Jarvis 1.0 RC Web, WhatsApp aguardando liberação externa**. Não usar a tag `1.0.0` antes da validação live ponta a ponta do WhatsApp.
+
+Documentação operacional:
+
+- `docs/architecture-1.0.md`
+- `docs/operations-runbook.md`
+- `docs/backup-recovery.md`
+- `docs/acceptance-matrix.md`
+
+Validação local:
+
+```bash
+npm run test:rc
+bash scripts/verify-repository.sh
+```
+
+## Frontend GitHub Pages / PWA
+
+Arquivos publicados diretamente na raiz do GitHub Pages incluem:
 
 - `index.html`
 - `app.js`
@@ -14,8 +34,12 @@ Arquivos para subir diretamente na raiz do repositorio GitHub Pages:
 - `document-intelligence.css`
 - `styles.css`
 - `jarvis-avatar.png`
+- `manifest.webmanifest`
+- `sw.js`
+- `pwa.js`
+- `icons/`
 
-Nao crie pasta `assets`.
+O service worker mantém somente o shell público e assets estáticos em cache. Requisições Supabase/Google/OpenAI e qualquer request com autorização ficam em modo de rede e nunca entram no cache.
 
 ## Melhorias visuais
 

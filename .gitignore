@@ -1,0 +1,10 @@
+backups/
+*.dump
+*.dump.age
+*.sql.age
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+

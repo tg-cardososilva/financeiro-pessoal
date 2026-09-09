@@ -231,7 +231,7 @@ async function downloadDriveBytes(accessToken: string, providerFileId: string) {
 }
 
 async function sha256Hex(bytes: Uint8Array) {
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer)
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
@@ -264,7 +264,7 @@ async function callDocumentWorker(userId: string, file: any, bytes: Uint8Array, 
       'X-Jarvis-Signature': signature,
       'X-Jarvis-Filename-B64': utf8Base64(file.name),
     },
-    body: bytes,
+    body: new Uint8Array(bytes).buffer,
   })
   const payload = await r.json().catch(() => ({}))
   if (!r.ok || payload?.ok !== true) throw appError(payload?.error || `Document AI worker ${r.status}`, payload?.code || 'document_ai_failed', 502)
