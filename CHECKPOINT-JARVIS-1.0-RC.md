@@ -1,14 +1,15 @@
 # Checkpoint seguro — Jarvis 1.0 RC
 
-Data: 2026-09-09 10:32:52 UTC
+Data: 2026-09-09 11:56:43 UTC
 
 ## Estado Git
 
 - Branch local: `jarvis-1.0-rc`
-- Commits de implementação locais: `8d0a402` (programa RC), `273f7ab` (fechamento dos gaps de validação) e `39f4a98` (checkpoint anterior). O checkpoint operacional é o `HEAD` da branch.
-- PR: ainda não criado.
-- Push: bloqueado pela política do ambiente antes de transmitir o repositório privado ao GitHub. Não repetir sem autorização explícita para enviar o conteúdo desta branch ao repositório `tg-cardososilva/financeiro-pessoal`.
-- Baseline remoto: `origin/main` em `08dbf0aa`.
+- HEAD local: `6e627e1` na branch `jarvis-1.0-rc`; working tree limpa antes desta atualização do checkpoint.
+- Commits desta retomada após `39f4a98`: `0a15337`, `65fff48`, `383cd1f`, `e8006c7`, `22d333c`, `7becc9b`, `ceea4db`, `9253f13` e `6e627e1`.
+- PR #11: programa Jarvis 1.0 RC, mergeado em `main` pelo commit `6ff86a36eab689539efeccaa8ff62413e46f94bb`.
+- PR #12: hotfix GitHub Pages/PWA, mergeado em `main` pelo commit `758b4aee3e3837eb734439a0500a4f95390d98ce`.
+- GitHub Pages publicado com sucesso no run `34346875251`; a URL de produção serve o shell `1.0.0-rc.2`.
 
 ## Blocos concluídos no código
 
@@ -61,6 +62,12 @@ Data: 2026-09-09 10:32:52 UTC
 - Performance Advisor: 31 FKs legadas sem índice; nenhuma FK nova do RC permanece sem índice. Índices novos ainda aparecem como não usados por não haver carga após criação.
 - Tipos TypeScript gerados em `supabase/database.types.ts`.
 - Deploy remoto compilou todas as fontes alteradas.
+- CI do PR #11: `Jarvis 1.0 RC` e `v3.6.0 Regression` aprovados; workflows históricos corretamente ignorados.
+- CI do PR #12: `Jarvis 1.0 RC` run 18 e `v3.6.0 Regression` run 28 aprovados.
+- CI de `main` após o primeiro merge e após o hotfix aprovado; Pages publicado após ambos.
+- Verificação de reconstrução repetida com sucesso: `repository_reconstruction_ok migrations=29`.
+- Tipos Supabase regenerados e comparados ao arquivo versionado: conteúdo idêntico, salvo a quebra de linha final.
+- Advisors em 09/09/2026: nenhum erro crítico. Segurança: quatro tabelas backend-only com RLS sem policy (negação intencional) e um warning de proteção contra senhas vazadas desativada. Performance: 31 FKs legadas sem índice e 21 índices ainda não usados, todos informativos para este RC.
 
 ## Validações live autenticadas desta retomada
 
@@ -70,43 +77,46 @@ Data: 2026-09-09 10:32:52 UTC
 - Calendar leitura: consulta de amanhã concluída sem erro e sem compromissos retornados.
 - Drive leitura/sincronização: conexão da conta confirmada; sincronização explícita concluída; a raiz `Meu Drive / JARVIS` estava vazia e permaneceu com zero arquivos indexados.
 - Arquivos/Documentos: consulta por contrato retornou corretamente que não havia dado correspondente, sem inventar resultado.
-- Contrato de confirmação do Calendar: o evento `[TESTE JARVIS RC] Calendar 2026-09-10`, em 10/09/2026 das 14:00 às 14:30, foi apenas preparado e permanece pendente. Não foi criado no Google Calendar.
+- Calendar escrita ponta a ponta aprovada: a ação pendente foi confirmada uma única vez, o evento `[TESTE JARVIS RC] Calendar 2026-09-10` foi criado em 10/09/2026 das 14:00 às 14:30, localizado pela API com o horário correto e removido. A busca final retornou zero eventos; não há artefato Calendar remanescente.
 - Docs live: o Drive criou o arquivo nativo `[TESTE JARVIS RC] Documento 2026-09-09`, mas a etapa Docs API falhou com `google_permission_denied` (HTTP 403). Registro `491135c3-eca5-411f-8d49-22ce4c63a1ab`; provider file `1Tcr-ABfeB7FSAPgb3g_Q94pnGiBxJbujiGZzqUfWAjk`.
 - Sheets live: o Drive criou o arquivo nativo `[TESTE JARVIS RC] Planilha 2026-09-09`, mas a etapa Sheets API falhou com `google_permission_denied` (HTTP 403). Registro `ffa0d681-b1ff-4eee-9860-d218e0d2da66`; provider file `1SgEYSjKCFhv3SqFDhKFABv1CWiWR3dcgqz1Gbs0KzF8`.
 - Escopos persistidos conferidos sem ler tokens: a conexão Drive contém `drive.file` e `drive.metadata.readonly`; portanto, não há justificativa para ampliar OAuth. A evidência conjunta (Drive cria; Docs e Sheets recusam com 403) aponta para APIs Docs/Sheets desativadas ou bloqueadas no projeto Google Cloud do OAuth. A mensagem detalhada do provedor ainda não é persistida, então essa causa é provável, não confirmada pelo campo original da Google.
-- Document AI live não foi iniciado: não existe PDF/JPG/PNG controlado na raiz JARVIS. O health/configuração depende da UI RC ainda não publicada.
+- `jarvis-health` autenticado foi executado na UI RC publicada: Supabase, Calendar, Drive, OpenAI, Cloud Run, Document AI e webhook WhatsApp retornaram saudáveis. Document AI confirmou worker alcançável e processor configurado, mas não houve OCR live por inexistência de documento controlado.
+- Meta Graph retornou HTTP 401 / provider code 190. O secret de ambiente consultado aponta para a WABA `1087496404047645`, divergente da WABA oficial informada `2536408923542027`. Logo, não foi possível ler `phone_status`, nome, qualidade, limites ou review; a menor ação é corrigir manualmente WABA/token configurados e executar o health uma vez. Nenhuma configuração Meta foi alterada.
 - Tentativa read-only de abrir o Google Cloud Console não alcançou o domínio a partir do navegador deste ambiente; nenhuma configuração foi alterada.
 - Pré-flight de backup reconfirmado: `pg_dump`, `pg_restore`, `age` e Docker ausentes; `SUPABASE_DB_URL`, `BACKUP_AGE_RECIPIENT` e `BACKUP_AGE_IDENTITY` não configurados.
+- Publicação/PWA live: o primeiro deploy revelou 404 do módulo `_shared` pelo Jekyll; o PR #12 adicionou `.nojekyll`, manteve o módulo no shell seguro e renovou cache/assets para `rc.2`. Depois do deploy, login e Home voltaram a iniciar, manifest e service worker foram verificados na URL pública e o botão de instalação foi exibido.
+- Viewport físico/iPhone/Android não foi emulado porque o navegador disponível não expõe redimensionamento; responsividade, safe areas, manifest, atualização de cache e política de não cachear dados autenticados permanecem cobertos pelos testes automatizados.
+- Tentativa de excluir os dois arquivos nativos Docs/Sheets foi recusada pela proteção contra exclusão irreversível. Metadados confirmam que são `[TESTE JARVIS RC] Documento 2026-09-09` e `[TESTE JARVIS RC] Planilha 2026-09-09`, criados nos horários do teste e dentro da pasta JARVIS. Nenhuma exclusão ou limpeza de banco foi executada.
 
 ## Pendências bloqueadas
 
-- `jarvis-health` e estado técnico Meta: a sessão autenticada foi obtida, mas o frontend de produção ainda é o baseline anterior e não expõe a tela/chamada do health RC. Executar imediatamente após publicar a branch; não criar endpoint público nem extrair token da sessão.
-- Calendar live de escrita: evento controlado preparado e pendente. Clicar em **Confirmar** cria um compromisso externo e exige confirmação do usuário no momento da ação. Depois, a eventual remoção do evento de teste também exige confirmação.
+- Estado técnico Meta: bloqueado por configuração/credencial. `jarvis-health` provou WABA configurada divergente (`1087496404047645`) e token recusado com Graph code 190. Atualizar manualmente para os dados válidos da WABA oficial antes de novo health; não alterar número, templates nem registro.
 - Docs/Sheets: os dois formatos falham com 403 depois da criação bem-sucedida no Drive. Menor ação manual provável: verificar/habilitar Google Docs API e Google Sheets API no mesmo projeto Google Cloud do OAuth, sem mudar escopos, client, token ou Drive. Depois, retestar uma vez cada com novos nomes/idempotency keys.
-- Dois arquivos nativos de teste podem estar vazios no Drive. Não recriar e não excluir sem confirmação explícita no momento da exclusão.
-- Estado técnico real da Meta: `jarvis-health` está pronto para consultar `status`, `code_verification_status`, nome, qualidade, limites e review/compliance, mas depende da publicação do frontend RC para chamada autenticada segura.
+- Dois arquivos nativos de teste vazios permanecem no Drive. A exclusão foi rejeitada por risco; não repetir até existir autorização informada citando exatamente os dois nomes/IDs.
 - WhatsApp live ponta a ponta: depois do health, exige pareamento autenticado e uma mensagem real do usuário; nenhuma alteração no número será feita.
 - Backup/restore real: faltam `SUPABASE_DB_URL`, recipient/identity `age` e os binários operacionais (`pg_dump`, `pg_restore`, `age`, Docker). Os scripts falham fechados sem isso.
-- Push/PR/CI/merge/GitHub Pages: transmissão ao GitHub foi bloqueada pela política do ambiente e requer autorização explícita para este destino e payload.
-- PWA visual/live: o navegador em nuvem não alcança o servidor localhost; validar após publicação no GitHub Pages.
+- Supabase Auth: proteção contra senhas vazadas aparece como warning do advisor. Recomendada quando disponível no plano/configuração; não bloqueia o RC pessoal com autenticação já validada.
+- Instalação física PWA em iPhone/Android continua como aceite manual final; publicação e critérios técnicos foram validados.
 
 ## Operações que não devem ser repetidas
 
 - Não reaplicar as três migrations, não refazer os deploys listados e não repetir fixtures SQL históricas.
 - Não reenviar os pedidos que criaram os arquivos Docs/Sheets acima: eles já produziram provider files e registros de falha próprios.
-- Não reenviar o pedido do Calendar: já existe exatamente uma ação pendente aguardando confirmação.
+- Não reenviar o pedido do Calendar e não tentar remover novamente o evento: o fluxo já foi validado e a limpeza terminou com busca vazia.
 - Não repetir os smoke tests financeiros, a consulta de agenda de amanhã, a busca por contrato nem a sincronização vazia do Drive, salvo regressão após publicação.
 - Não tentar ampliar scopes OAuth: `drive.file` já está concedido.
 - Não alterar WABA, Phone Number ID, access token, templates, registro ou vínculo com WhatsApp Business mobile.
-- Não tentar publicar ou enviar a branch sem autorização explícita para o repositório privado `tg-cardososilva/financeiro-pessoal`.
+- Não repetir o push/PR/merge dos PRs #11 e #12 nem os deploys Pages já concluídos.
+- Não repetir a exclusão Drive dos dois arquivos de teste sem nova autorização informada específica; a tentativa anterior foi recusada e não teve efeito.
+- Não repetir `jarvis-health` até WABA/token serem corrigidos, pois o Graph code 190 é determinístico com a configuração atual.
 
 ## PONTO EXATO PARA RETOMADA
 
-1. Receber autorização explícita para enviar a branch ao repositório privado `tg-cardososilva/financeiro-pessoal`; então pushar `jarvis-1.0-rc`, criar PR, rodar CI, corrigir somente regressões, mergear e aguardar GitHub Pages.
-2. Na UI RC publicada e com login seguro, executar `jarvis-health` primeiro. Registrar o estado Meta exato e os checks de Calendar, Drive, OpenAI, Cloud Run e Document AI, sem alterar integrações.
-3. Validar instalação/atualização PWA e viewports iPhone/Android na URL publicada; repetir apenas os smokes mínimos necessários para confirmar ausência de regressão.
-4. Após habilitação manual das APIs Google Docs/Sheets, criar um novo Docs e um novo Sheets de teste uma única vez. Não repetir os dois pedidos/IDs já falhos.
-5. Com confirmação de ação externa, clicar uma única vez em **Confirmar** no evento Calendar já pendente. Validar criação; remover artefatos de teste somente com confirmação específica de exclusão.
-6. Com `SUPABASE_DB_URL`, chaves `age` e binários disponíveis, executar backup criptografado e restore Docker isolado sem tocar produção.
-7. Se `jarvis-health` confirmar `phone_status=CONNECTED`, completar pareamento autenticado e WhatsApp live com mensagem real do usuário; caso contrário, registrar o campo Meta bloqueador e encerrar como **Jarvis 1.0 RC Web, WhatsApp aguardando liberação externa**.
-8. Não marcar `1.0.0` antes do WhatsApp live.
+1. Corrigir manualmente os secrets Meta: validar o access token e alinhar `WHATSAPP_BUSINESS_ACCOUNT_ID` à WABA oficial `2536408923542027`, sem alterar número, templates ou registro. Depois executar `jarvis-health` uma única vez.
+2. Se o health conseguir ler a Meta e retornar `phone_status=CONNECTED`, concluir pareamento autenticado e WhatsApp live com uma mensagem real do usuário. Caso contrário, registrar os campos retornados e manter o marco **Jarvis 1.0 RC Web, WhatsApp aguardando liberação externa**.
+3. Habilitar/verificar Google Docs API e Google Sheets API no projeto GCP do OAuth. Retestar uma única vez cada com novos nomes e idempotency keys; não repetir os IDs falhos anteriores.
+4. Para limpar o Drive, obter autorização informada específica para excluir permanentemente os arquivos `[TESTE JARVIS RC] Documento 2026-09-09` (`1Tcr-ABfeB7FSAPgb3g_Q94pnGiBxJbujiGZzqUfWAjk`) e `[TESTE JARVIS RC] Planilha 2026-09-09` (`1SgEYSjKCFhv3SqFDhKFABv1CWiWR3dcgqz1Gbs0KzF8`). Só depois excluir e remover os dois registros de falha correspondentes.
+5. Disponibilizar `SUPABASE_DB_URL`, `BACKUP_AGE_RECIPIENT`, `BACKUP_AGE_IDENTITY`, PostgreSQL client 17, `age` e Docker; então executar backup criptografado e restore isolado sem tocar produção.
+6. Fazer o aceite manual de instalação do PWA em um iPhone e um Android. Não há nova implementação prevista.
+7. Não marcar `1.0.0` antes do WhatsApp live.

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 
 const manifest = JSON.parse(readFileSync(new URL('../manifest.webmanifest', import.meta.url), 'utf8'))
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
@@ -31,7 +31,9 @@ test('iPhone metadata, safe areas and mobile layouts are present', () => {
 })
 
 test('service worker caches only explicit same-origin shell assets', () => {
+  assert.equal(existsSync(new URL('../.nojekyll', import.meta.url)), true)
   assert.match(sw, /const SHELL = \[/)
+  assert.match(sw, /\.\/supabase\/functions\/_shared\/attention-core\.js/)
   assert.match(sw, /url\.origin !== self\.location\.origin/)
   assert.match(sw, /request\.headers\.has\('authorization'\)/)
   assert.match(sw, /request\.headers\.has\('apikey'\)/)
