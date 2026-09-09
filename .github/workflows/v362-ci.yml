@@ -10,6 +10,7 @@ on:
 
 jobs:
   validate:
+    if: github.event_name == 'push' || github.head_ref == 'v3.6.2-security-hardening'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
