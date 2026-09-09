@@ -54,12 +54,15 @@ test('health checks are sanitized and do not expose secret values', () => {
   assert.doesNotMatch(health, /refresh_token:/)
 })
 
-test('Calendar executor requires explicit confirmation and claims once', () => {
+test('Calendar executor requires explicit confirmation and claims every batch item once', () => {
   const calendar = read('../supabase/functions/jarvis-calendar/index.ts')
   const app = read('../app.js')
   assert.match(calendar, /explicit_confirmation\s*!==\s*true/)
   assert.match(calendar, /\.in\('status', \['proposed', 'confirmed', 'failed'\]\)/)
-  assert.match(calendar, /Acao ja esta em processamento/)
+  assert.match(calendar, /body\?\.batch_id/)
+  assert.match(calendar, /executeCalendarBatchItems/)
+  assert.match(calendar, /status: 'in_progress'/)
+  assert.match(app, /batch_id:\s*batchId/)
   assert.match(app, /explicit_confirmation:\s*true/)
 })
 

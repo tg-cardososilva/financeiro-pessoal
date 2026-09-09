@@ -4,6 +4,7 @@ import { rememberForUser } from './memory-service.ts';
 import { extractAction, groundedAnswer, researchWithSources } from './openai.ts';
 import { routeJarvisMessage } from './jarvis-router.mjs';
 import { contextHasData, retrieveJarvisContext } from './retrieval.ts';
+import { calendarBatchConfirmationReply, normalizeCalendarEvents } from './calendar-batch.mjs';
 
 function sourceForChannel(channel: string) {
   return channel === 'whatsapp' ? 'whatsapp' : channel === 'web' ? 'jarvis_web' : 'system';
@@ -82,6 +83,7 @@ function fallbackAction(message: string, routedAction: string) {
     note: { title: null, content: null, note_type: 'note', tags: [] },
     project: { name: null, description: null, due_at: null },
     calendar: { title: null, starts_at: null, ends_at: null, location: null, notes: null },
+    calendar_events: [],
     deliverable: { title: null, summary: null, document_content: null, headings: [], sheet_rows: [] },
     memory: { memory_type: 'context', title: null, content: null, importance: 3, scope: 'personal' },
     financial: { direction: 'expense', amount: null, merchant: null, description: null, occurred_at: null },
@@ -145,21 +147,18 @@ async function performAction(args: {
     created.task = result.item;
     reply = action === 'task_complete' ? `Tarefa concluída: ${result.item.title}.` : `Tarefa reaberta: ${result.item.title}.`;
   } else if (action === 'calendar_create') {
-    const calendar = parsed.calendar || {};
-    if (!calendar.title || !calendar.starts_at || !calendar.ends_at) throw new Error('calendar_details_missing');
-    const { data, error } = await client.from('jarvis_actions').insert({
-      user_id: userId, source_message_id: inboundId, action_type: 'calendar_create',
-      status: 'proposed', confirmation_required: true,
-      payload: {
-        title: calendar.title, starts_at: calendar.starts_at, ends_at: calendar.ends_at,
-        location: calendar.location || null, notes: calendar.notes || null,
-        idempotency_key: `${keyBase}:calendar`,
-      },
-    }).select('*').single();
+    const calendars = normalizeCalendarEvents(parsed);
+    const { data, error } = await client.rpc('reserve_jarvis_calendar_action_batch', {
+      p_source_message_id: inboundId,
+      p_events: calendars,
+    });
     if (error) throw error;
-    created.calendar_action = data;
+    const calendarActions = Array.isArray(data) ? data : [];
+    if (calendarActions.length !== calendars.length) throw new Error('calendar_batch_reservation_incomplete');
+    created.calendar_actions = calendarActions;
+    if (calendarActions.length === 1) created.calendar_action = calendarActions[0];
     confirmationRequired = true;
-    reply = `Preparei o compromisso “${calendar.title}”. Confirme para criar no Google Calendar.`;
+    reply = calendarBatchConfirmationReply(calendars);
   } else if (['create_doc','create_sheet','research_doc','research_sheet','save_previous_doc','save_previous_sheet'].includes(action)) {
     let deliverable = parsed.deliverable || {};
     let sources: any[] = [];

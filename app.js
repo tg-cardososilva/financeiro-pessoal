@@ -1,8 +1,8 @@
-import { ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=1.0.0-rc.2'
-import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=1.0.0-rc.2'
-import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=1.0.0-rc.2'
-import { fileList, fileSync, fileLinkProject, fileUnlinkProject, fileStatus } from './jarvis-files-client.js?v=1.0.0-rc.2'
-import { FILE_TYPE_LABELS, fileTypeLabel, fileIcon, fileSizeLabel, matchesFileFilters } from './files-ui.js?v=1.0.0-rc.2'
+import { ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=1.0.0-rc.3'
+import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=1.0.0-rc.3'
+import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=1.0.0-rc.3'
+import { fileList, fileSync, fileLinkProject, fileUnlinkProject, fileStatus } from './jarvis-files-client.js?v=1.0.0-rc.3'
+import { FILE_TYPE_LABELS, fileTypeLabel, fileIcon, fileSizeLabel, matchesFileFilters } from './files-ui.js?v=1.0.0-rc.3'
 
 const SUPABASE_URL = 'https://qhpkraqrcvhhtbqjhkmm.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_OXgobfJOCgDy4OP2n_zKgg_tOvEa28F'
@@ -2408,6 +2408,31 @@ function formatJarvisEvent(payload = {}) {
   return `${date} · ${time}${endTime ? `–${endTime}` : ''}`
 }
 
+function calendarActionBatchId(action) {
+  return action?.batch_id || action?.payload?.batch_id || action?.id || ''
+}
+
+function groupCalendarActions(actions = []) {
+  const groups = new Map()
+  for (const action of actions) {
+    const batchId = calendarActionBatchId(action)
+    if (!groups.has(batchId)) groups.set(batchId, [])
+    groups.get(batchId).push(action)
+  }
+  return [...groups.entries()].map(([batchId, items]) => ({
+    batchId,
+    items: items.sort((a, b) => Number(a.batch_index ?? 0) - Number(b.batch_index ?? 0)),
+  }))
+}
+
+function calendarActionGroupsMarkup(actions = [], google = null) {
+  return groupCalendarActions(actions).map(({ batchId, items }) => {
+    const failed = items.filter((item) => item.status === 'failed').length
+    const label = items.length === 1 ? '1 compromisso' : `${items.length} compromissos`
+    return `<section class="calendar-batch-card"><div class="calendar-batch-head"><strong>${esc(label)}</strong><small>${failed ? `${failed} com falha · retry seguro` : 'Aguardando confirmação'}</small></div><div class="calendar-batch-events">${items.map((item) => `<article><div><strong>${esc(item.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(item.payload))}</span>${item.payload?.duration_defaulted ? '<small>Duração padrão: 1 hora</small>' : ''}${item.error_message ? `<small>${esc(item.error_message)}</small>` : ''}</div></article>`).join('')}</div><div class="calendar-batch-actions"><button class="button small" type="button" data-jarvis-calendar-cancel-batch="${esc(batchId)}">Cancelar lote</button><button class="button primary small" type="button" data-jarvis-calendar-batch="${esc(batchId)}" ${google ? '' : 'disabled'}>Confirmar ${items.length > 1 ? 'lote' : ''}</button></div></section>`
+  }).join('')
+}
+
 async function connectJarvisGoogleCalendar() {
   const btn = $('jarvisGoogleConnect')
   setBusy(btn, true, 'Abrindo Google')
@@ -2423,21 +2448,37 @@ async function connectJarvisGoogleCalendar() {
   }
 }
 
-async function executeJarvisCalendarAction(actionId) {
-  const btn = document.querySelector(`[data-jarvis-calendar-action="${actionId}"]`)
-  setBusy(btn, true, 'Agendando')
+async function executeJarvisCalendarBatch(batchId, operation = 'execute') {
+  const selector = operation === 'cancel'
+    ? `[data-jarvis-calendar-cancel-batch="${batchId}"]`
+    : `[data-jarvis-calendar-batch="${batchId}"]`
+  const btn = document.querySelector(selector)
+  if (operation === 'cancel' && !confirm('Cancelar todas as propostas ainda não executadas deste lote?')) return
+  setBusy(btn, true, operation === 'cancel' ? 'Cancelando' : 'Agendando')
   try {
     const { data, error } = await supabase.functions.invoke('jarvis-calendar', {
-      body: { action_id: actionId, explicit_confirmation: true }
+      body: { batch_id: batchId, operation, explicit_confirmation: true }
     })
     if (error) throw error
     if (data?.error) throw new Error(data.error)
-    toast('Evento criado no Google Calendar.', 'success')
+    const summary = data?.summary || {}
+    if (operation === 'cancel') {
+      toast(`${summary.cancelled || 0} proposta(s) cancelada(s).`, 'success')
+    } else if (summary.failed || summary.in_progress) {
+      toast(`Lote processado: ${summary.executed || 0} criado(s), ${summary.failed || 0} falhou(aram), ${summary.in_progress || 0} em processamento.`, 'error')
+    } else {
+      toast(`${summary.executed || 0} evento(s) criado(s) no Google Calendar.`, 'success')
+    }
     await Promise.all([loadJarvisData(true), loadCalendarData(true)])
   } catch (err) {
     toast(humanError(err), 'error')
     setBusy(btn, false)
   }
+}
+
+function bindCalendarBatchActions() {
+  document.querySelectorAll('[data-jarvis-calendar-batch]').forEach((button) => button.addEventListener('click', () => executeJarvisCalendarBatch(button.dataset.jarvisCalendarBatch)))
+  document.querySelectorAll('[data-jarvis-calendar-cancel-batch]').forEach((button) => button.addEventListener('click', () => executeJarvisCalendarBatch(button.dataset.jarvisCalendarCancelBatch, 'cancel')))
 }
 
 async function loadWhatsAppIdentity() {
@@ -2826,14 +2867,14 @@ function renderAgenda() {
       </div>
       <aside class="personal-side-stack">
         <section class="panel integration-card-large ${google ? 'connected' : ''}"><span class="integration-logo big">31</span><div><span class="eyebrow">GOOGLE CALENDAR</span><h3>${google ? 'Conectado' : 'Não conectado'}</h3><p>${google ? esc(state.calendar.displayName || google.display_name || 'Agenda principal') : 'Autorize sua agenda para ler e executar compromissos.'}</p></div>${google ? '<span class="connection-ok">✓</span>' : '<button id="agendaGoogleConnect" class="button small" type="button">Conectar</button>'}</section>
-        <section class="panel"><div class="panel-head"><div><h2>Aguardando confirmação</h2><p>Propostas do Jarvis não são eventos reais até você confirmar.</p></div></div><div class="pending-action-list">${pending.length ? pending.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span><small>Jarvis · aguardando confirmação</small>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" data-jarvis-calendar-action="${esc(a.id)}" type="button" ${google ? '' : 'disabled'}>Confirmar</button></article>`).join('') : '<div class="personal-empty compact"><span>Nenhuma ação pendente.</span></div>'}</div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Aguardando confirmação</h2><p>Propostas do Jarvis não são eventos reais até você confirmar.</p></div></div><div class="pending-action-list">${pending.length ? calendarActionGroupsMarkup(pending, google) : '<div class="personal-empty compact"><span>Nenhuma ação pendente.</span></div>'}</div></section>
       </aside>
     </section>
   </div>`
   $('agendaAskJarvis')?.addEventListener('click', () => navigate('jarvis'))
   $('agendaGoogleConnect')?.addEventListener('click', connectJarvisGoogleCalendar)
   $('agendaCalendarRetry')?.addEventListener('click', () => loadCalendarData(true))
-  document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
+  bindCalendarBatchActions()
 }
 
 function domainProjectName(id) {
@@ -3221,7 +3262,7 @@ function renderJarvis() {
       <aside class="jarvis-side">
         <section class="panel jarvis-command-center">
           <div class="panel-head"><div><span class="eyebrow">CENTRAL DE AÇÕES</span><h2>${pendingActions} aguardando</h2><p>O Jarvis prepara. Você mantém o controle do que sai do sistema.</p></div></div>
-          ${calendarActions.length ? `<div class="jarvis-calendar-actions">${calendarActions.map((a) => `<article><div><strong>${esc(a.payload?.title || 'Evento')}</strong><span>${esc(formatJarvisEvent(a.payload))}</span>${a.error_message ? `<small>${esc(a.error_message)}</small>` : ''}</div><button class="button primary small" type="button" data-jarvis-calendar-action="${esc(a.id)}" ${google ? '' : 'disabled'}>Confirmar</button></article>`).join('')}</div>` : '<div class="personal-empty compact"><span>Nenhuma ação externa pendente agora.</span></div>'}
+          ${calendarActions.length ? `<div class="jarvis-calendar-actions">${calendarActionGroupsMarkup(calendarActions, google)}</div>` : '<div class="personal-empty compact"><span>Nenhuma ação externa pendente agora.</span></div>'}
         </section>
         <section class="panel jarvis-integrations-compact">
           <div class="panel-head"><div><h2>Integrações</h2><p>Um assistente, vários canais e serviços.</p></div></div>
@@ -3238,7 +3279,7 @@ function renderJarvis() {
   $('jarvisRefresh')?.addEventListener('click', () => Promise.all([loadJarvisData(true), loadFilesData(true)]))
   $('jarvisGoogleConnect')?.addEventListener('click', connectJarvisGoogleCalendar)
   $('jarvisWhatsAppPair')?.addEventListener('click', startWhatsAppPairing)
-  document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
+  bindCalendarBatchActions()
   document.querySelectorAll('[data-jarvis-prompt]').forEach((b) => b.addEventListener('click', () => { $('jarvisInput').value = b.dataset.jarvisPrompt; $('jarvisInput').focus() }))
   $('jarvisForm')?.addEventListener('submit', sendJarvisMessage)
   $('jarvisInput')?.addEventListener('focus', () => setJarvisVisualState('listening'))

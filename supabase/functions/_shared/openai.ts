@@ -48,6 +48,15 @@ export async function groundedAnswer(message: string, domains: string[], context
   return { text, model: payload.model || null, usage: payload.usage || null };
 }
 
+const calendarEventSchema = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    title: { type: ['string','null'] }, starts_at: { type: ['string','null'] },
+    ends_at: { type: ['string','null'] }, location: { type: ['string','null'] }, notes: { type: ['string','null'] },
+  },
+  required: ['title','starts_at','ends_at','location','notes'],
+};
+
 const actionSchema = {
   type: 'object',
   additionalProperties: false,
@@ -83,14 +92,8 @@ const actionSchema = {
       },
       required: ['name','description','due_at'],
     },
-    calendar: {
-      type: 'object', additionalProperties: false,
-      properties: {
-        title: { type: ['string','null'] }, starts_at: { type: ['string','null'] },
-        ends_at: { type: ['string','null'] }, location: { type: ['string','null'] }, notes: { type: ['string','null'] },
-      },
-      required: ['title','starts_at','ends_at','location','notes'],
-    },
+    calendar: calendarEventSchema,
+    calendar_events: { type: 'array', maxItems: 10, items: calendarEventSchema },
     deliverable: {
       type: 'object', additionalProperties: false,
       properties: {
@@ -127,7 +130,7 @@ const actionSchema = {
       required: ['direction','amount','merchant','description','occurred_at'],
     },
   },
-  required: ['action','reply','target_query','project_query','task','note','project','calendar','deliverable','memory','financial'],
+  required: ['action','reply','target_query','project_query','task','note','project','calendar','calendar_events','deliverable','memory','financial'],
 };
 
 export async function extractAction(message: string, routedAction: string) {
@@ -142,7 +145,10 @@ export async function extractAction(message: string, routedAction: string) {
         `O roteador determinístico classificou como: ${routedAction}.`,
         'Mantenha a ação do roteador, exceto se a mensagem for realmente ambígua; nesse caso use unknown.',
         'Tarefa é algo a fazer; nota é conteúdo para guardar; projeto agrupa trabalho.',
-        'Agenda cria apenas proposta que exigirá confirmação.',
+        'Agenda cria apenas propostas que exigirão confirmação.',
+        'Para Calendar, extraia um item em calendar_events para cada compromisso distinto pedido, preservando a ordem.',
+        'Em Calendar, calendar deve repetir o primeiro item para compatibilidade; sem compromissos, use calendar com campos nulos e calendar_events vazio.',
+        'Se o início estiver claro e duração/fim não forem informados, deixe ends_at nulo; o contrato aplicará 60 minutos e mostrará isso na confirmação.',
         'Docs são texto estruturado. Sheets são tabelas. Não use Slides.',
         'Para memória, só aceite preferência, fato estável, decisão, regra, rotina ou contexto de projeto explicitamente declarado.',
         `Agora em America/Sao_Paulo: ${localNow}.`,

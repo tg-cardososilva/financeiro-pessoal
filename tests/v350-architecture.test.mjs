@@ -32,8 +32,8 @@ assert.equal(service.includes('files.delete'), false)
 assert.equal(service.includes('files.update'), false)
 assert.equal(service.includes('files.create'), false)
 
-assert.match(html, /styles\.css\?v=1\.0\.0-rc\.2/)
-assert.match(html, /app\.js\?v=1\.0\.0-rc\.2/)
+assert.match(html, /styles\.css\?v=1\.0\.0-rc\.\d+/)
+assert.match(html, /app\.js\?v=1\.0\.0-rc\.\d+/)
 assert.match(html, /data-view="files"/)
 
 const frontend = app + client + readFileSync(new URL('../files-ui.js', import.meta.url), 'utf8') + html

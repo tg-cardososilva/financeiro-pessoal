@@ -807,12 +807,16 @@ export type Database = {
       jarvis_actions: {
         Row: {
           action_type: string
+          batch_id: string | null
+          batch_index: number | null
+          batch_size: number | null
           confirmation_required: boolean
           confirmed_at: string | null
           created_at: string
           error_message: string | null
           executed_at: string | null
           id: string
+          idempotency_key: string | null
           payload: Json
           source_message_id: string | null
           status: string
@@ -821,12 +825,16 @@ export type Database = {
         }
         Insert: {
           action_type: string
+          batch_id?: string | null
+          batch_index?: number | null
+          batch_size?: number | null
           confirmation_required?: boolean
           confirmed_at?: string | null
           created_at?: string
           error_message?: string | null
           executed_at?: string | null
           id?: string
+          idempotency_key?: string | null
           payload?: Json
           source_message_id?: string | null
           status?: string
@@ -835,12 +843,16 @@ export type Database = {
         }
         Update: {
           action_type?: string
+          batch_id?: string | null
+          batch_index?: number | null
+          batch_size?: number | null
           confirmation_required?: boolean
           confirmed_at?: string | null
           created_at?: string
           error_message?: string | null
           executed_at?: string | null
           id?: string
+          idempotency_key?: string | null
           payload?: Json
           source_message_id?: string | null
           status?: string
@@ -2438,6 +2450,33 @@ export type Database = {
         }
         Returns: string
       }
+      reserve_jarvis_calendar_action_batch: {
+        Args: { p_events: Json; p_source_message_id: string }
+        Returns: {
+          action_type: string
+          batch_id: string | null
+          batch_index: number | null
+          batch_size: number | null
+          confirmation_required: boolean
+          confirmed_at: string | null
+          created_at: string
+          error_message: string | null
+          executed_at: string | null
+          id: string
+          idempotency_key: string | null
+          payload: Json
+          source_message_id: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "jarvis_actions"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       reserve_jarvis_deliverable: {
         Args: {
           p_deliverable_type: string
@@ -2606,4 +2645,3 @@ export const Constants = {
     },
   },
 } as const
-

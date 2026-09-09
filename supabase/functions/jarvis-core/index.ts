@@ -6,7 +6,9 @@ import { executeJarvis } from '../_shared/jarvis-engine.ts';
 const admin = adminClient();
 const SAFE_ERRORS = new Set([
   'empty_message','task_target_missing','task_not_found','task_target_ambiguous',
-  'calendar_details_missing','financial_amount_missing','project_not_found',
+  'calendar_details_missing','calendar_time_invalid','calendar_end_before_start',
+  'calendar_batch_size_invalid','calendar_batch_reservation_incomplete',
+  'financial_amount_missing','project_not_found',
   'previous_content_not_found','document_content_required','sheet_rows_required',
   'google_drive_not_connected','google_calendar_not_connected','google_credentials_missing',
   'google_token_refresh_failed','jarvis_root_missing','jarvis_root_invalid',
