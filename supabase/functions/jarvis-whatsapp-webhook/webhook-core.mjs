@@ -24,15 +24,17 @@ function emit(log, level, event, fields = {}) {
   }
 }
 
-export function createWebhookHandler({
-  verifyToken,
-  appSecret,
-  claimEvent,
-  cleanupExpired = async () => {},
-  processEvent = null,
-  defer = (promise) => promise,
-  log = (_level, _event, _fields) => {},
-}) {
+/** @param {any} options */
+export function createWebhookHandler(options) {
+  const {
+    verifyToken,
+    appSecret,
+    claimEvent,
+    cleanupExpired = async () => {},
+    processEvent = null,
+    defer = (promise) => promise,
+    log = (_level, _event, _fields) => {},
+  } = options
   if (typeof claimEvent !== 'function') throw new Error('claimEvent is required')
 
   return async function handleWebhook(req) {
