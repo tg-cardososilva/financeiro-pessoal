@@ -3,28 +3,28 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-function isoDateBR(s) {
+function isoDateBR(s: unknown) {
   const [d,m,y] = String(s).trim().split('/');
   if (!d || !m || !y) throw new Error(`Data invalida: ${s}`);
   return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
 }
 
-function moneyBR(s) {
+function moneyBR(s: unknown) {
   const n = Number(String(s).replace(/R\$/g,'').replace(/\s/g,'').replace(/\./g,'').replace(',','.'));
   if (!Number.isFinite(n)) throw new Error(`Valor invalido: ${s}`);
   return n;
 }
 
-function cleanText(s) {
+function cleanText(s: unknown) {
   return String(s ?? '').replace(/^\uFEFF/,'').replace(/\s+/g,' ').trim();
 }
 
-async function sha256(input) {
+async function sha256(input: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
   return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-function classify(description, amount, profile, category='') {
+function classify(description: unknown, amount: number, profile: string, category: unknown = '') {
   const d = cleanText(description).toUpperCase();
   const c = cleanText(category).toUpperCase();
   if (/PAGAMENTO FATURA CARTAO INTER|PAGAMENTO ON LINE/.test(d)) return {flow_type:'transfer',is_internal_transfer:true,include_in_budget:false,category_hint:'Transferência interna'};
@@ -45,8 +45,8 @@ function classify(description, amount, profile, category='') {
   return {flow_type:'expense',is_internal_transfer:false,include_in_budget:true,category_hint:'Outras despesas'};
 }
 
-function parseCsvLine(line, delimiter=',') {
-  const out=[]; let cur=''; let q=false;
+function parseCsvLine(line: string, delimiter = ',') {
+  const out: string[]=[]; let cur=''; let q=false;
   for (let i=0;i<line.length;i++) {
     const ch=line[i];
     if (ch==='"') {
@@ -59,11 +59,11 @@ function parseCsvLine(line, delimiter=',') {
   return out.map(v=>v.trim());
 }
 
-async function parseInterCheckingCsv(text) {
+async function parseInterCheckingCsv(text: string) {
   const lines=text.replace(/\r/g,'').split('\n').filter(Boolean);
   const headerIndex=lines.findIndex(l=>l.startsWith('Data Lançamento;'));
   if (headerIndex<0) throw new Error('Cabecalho de conta corrente Inter nao encontrado');
-  const rows=[];
+  const rows: any[]=[];
   for (let i=headerIndex+1;i<lines.length;i++) {
     const p=parseCsvLine(lines[i],';'); if (p.length<3) continue;
     const date=isoDateBR(p[0]); const description=cleanText(p[1]); const amount=moneyBR(p[2]);
@@ -76,9 +76,9 @@ async function parseInterCheckingCsv(text) {
   return rows;
 }
 
-async function parseInterCardCsv(text) {
+async function parseInterCardCsv(text: string) {
   const lines=text.replace(/^\uFEFF/,'').replace(/\r/g,'').split('\n').filter(Boolean);
-  const rows=[];
+  const rows: any[]=[];
   const occurrences=new Map();
   for (let i=1;i<lines.length;i++) {
     const p=parseCsvLine(lines[i],','); if (p.length<5) continue;
@@ -94,14 +94,14 @@ async function parseInterCardCsv(text) {
   return rows;
 }
 
-function tag(block,name) {
+function tag(block: string, name: string) {
   const m=block.match(new RegExp(`<${name}>([^<\\r\\n]+)`,'i'));
   return m ? cleanText(m[1]) : null;
 }
 
-async function parseInterOfx(text) {
+async function parseInterOfx(text: string) {
   const blocks=text.split(/<STMTTRN>/i).slice(1);
-  const rows=[];
+  const rows: any[]=[];
   const occurrences=new Map();
   for (let i=0;i<blocks.length;i++) {
     const b=blocks[i]; const ds=tag(b,'DTPOSTED'); const amt=tag(b,'TRNAMT'); if (!ds||!amt) continue;
@@ -125,13 +125,13 @@ async function parseInterOfx(text) {
   return rows;
 }
 
-Deno.serve(async (req)=>{
+Deno.serve(async (req: Request)=>{
   if (req.method==='OPTIONS') return new Response('ok',{headers:cors});
   try {
     const body=await req.json();
     const profile=String(body.profile||''); const text=String(body.text||'');
     if (!text) throw new Error('Arquivo vazio');
-    let rows;
+    let rows: any[];
     if (profile==='inter_checking_csv') rows=await parseInterCheckingCsv(text);
     else if (profile==='inter_card_csv') rows=await parseInterCardCsv(text);
     else if (profile==='inter_ofx') rows=await parseInterOfx(text);
@@ -142,4 +142,3 @@ Deno.serve(async (req)=>{
     return new Response(JSON.stringify({error:e instanceof Error?e.message:String(e)}),{status:400,headers:{...cors,'Content-Type':'application/json'}});
   }
 });
-
