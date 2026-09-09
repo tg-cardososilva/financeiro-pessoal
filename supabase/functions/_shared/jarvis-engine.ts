@@ -76,7 +76,7 @@ async function saveOutbound(client: any, input: {
 }
 
 function fallbackAction(message: string, routedAction: string) {
-  const empty = {
+  const empty: any = {
     action: routedAction, reply: '', target_query: null, project_query: null,
     task: { title: null, description: null, due_at: null, priority: 'normal' },
     note: { title: null, content: null, note_type: 'note', tags: [] },

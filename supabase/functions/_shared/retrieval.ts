@@ -224,8 +224,8 @@ async function attentionContext(client: any, admin: any, userId: string) {
   return { summary: attentionSummary(items), items: items.slice(0, 30), generated_at: now.toISOString() };
 }
 
-export async function retrieveJarvisContext(client: any, admin: any, userId: string, domains: string[], message: string) {
-  const context: Record<string, unknown> = {};
+export async function retrieveJarvisContext(client: any, admin: any, userId: string, domains: string[], message: string): Promise<Record<string, any>> {
+  const context: Record<string, any> = {};
   if (domains.includes('finance')) context.finance = await financeContext(client, userId, message);
   if (domains.includes('agenda')) {
     const now = new Date();
