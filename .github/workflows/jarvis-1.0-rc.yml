@@ -1,0 +1,42 @@
+name: Jarvis 1.0 RC
+
+on:
+  push:
+    branches: [main, jarvis-1.0-rc]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Diff and JavaScript syntax
+        run: |
+          git diff --check
+          npm run test:syntax
+          node --check attention-rules.js
+          node --check domain-ui.js
+          node --check files-ui.js
+          node --check jarvis-domain-client.js
+          node --check jarvis-files-client.js
+          node --check document-intelligence-core.js
+          node --check document-intelligence.js
+      - name: Edge Function type checks
+        run: |
+          for entry in supabase/functions/*/index.ts; do deno check "$entry"; done
+      - name: Cloud Run syntax
+        run: python3 -m py_compile cloud-run/jarvis-document-ai-worker/server.py
+      - name: Full acceptance suite
+        run: npm test
+      - name: Reconstruction and secret guardrails
+        run: bash scripts/verify-repository.sh
+

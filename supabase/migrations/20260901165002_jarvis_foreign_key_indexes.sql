@@ -1,0 +1,13 @@
+create index if not exists jarvis_messages_identity_idx on public.jarvis_messages(identity_id) where identity_id is not null;
+create index if not exists jarvis_messages_reply_to_idx on public.jarvis_messages(reply_to_id) where reply_to_id is not null;
+create index if not exists jarvis_projects_source_message_idx on public.jarvis_projects(source_message_id) where source_message_id is not null;
+create index if not exists jarvis_notes_project_idx on public.jarvis_notes(project_id) where project_id is not null;
+create index if not exists jarvis_notes_source_message_idx on public.jarvis_notes(source_message_id) where source_message_id is not null;
+create index if not exists jarvis_memories_source_message_idx on public.jarvis_memories(source_message_id) where source_message_id is not null;
+create index if not exists jarvis_tasks_project_idx on public.jarvis_tasks(project_id) where project_id is not null;
+create index if not exists jarvis_tasks_source_message_idx on public.jarvis_tasks(source_message_id) where source_message_id is not null;
+create index if not exists jarvis_actions_source_message_idx on public.jarvis_actions(source_message_id) where source_message_id is not null;
+create index if not exists financial_annotations_source_message_idx on public.financial_annotations(source_message_id) where source_message_id is not null;
+create index if not exists financial_annotations_account_idx on public.financial_annotations(account_id) where account_id is not null;
+create index if not exists financial_annotations_category_idx on public.financial_annotations(category_id) where category_id is not null;
+create index if not exists financial_annotations_transaction_idx on public.financial_annotations(matched_transaction_id) where matched_transaction_id is not null;

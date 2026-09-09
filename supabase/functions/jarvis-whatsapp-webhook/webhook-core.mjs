@@ -29,6 +29,8 @@ export function createWebhookHandler({
   appSecret,
   claimEvent,
   cleanupExpired = async () => {},
+  processEvent = null,
+  defer = (promise) => promise,
   log = (_level, _event, _fields) => {},
 }) {
   if (typeof claimEvent !== 'function') throw new Error('claimEvent is required')
@@ -123,12 +125,16 @@ export function createWebhookHandler({
       const descriptors = collectEventDescriptors(payload, rawBodyHash)
       let newEvents = 0
       let duplicateEvents = 0
+      const claimed = []
 
       for (const descriptor of descriptors) {
         const eventKeyHash = await sha256Hex(descriptor.key)
         const result = await claimEvent({ eventKeyHash, eventKind: descriptor.kind })
         if (result === 'duplicate') duplicateEvents += 1
-        else newEvents += 1
+        else {
+          newEvents += 1
+          claimed.push({ descriptor, eventKeyHash })
+        }
       }
 
       try {
@@ -145,8 +151,19 @@ export function createWebhookHandler({
         duplicate_events: duplicateEvents,
       })
 
-      // Future Jarvis processing must be added only after successful signature
-      // verification and only for descriptors that claimEvent marks as new.
+      if (typeof processEvent === 'function') {
+        for (const event of claimed) {
+          const pending = Promise.resolve(processEvent({ ...event, payload })).catch((error) => {
+            emit(log, 'error', 'WA_PROCESSING', {
+              ok: false,
+              code: typeof error?.message === 'string' ? error.message.slice(0, 80) : 'processing_failed',
+              event_kind: event.descriptor.kind,
+            })
+          })
+          defer(pending)
+        }
+      }
+
       return json({
         received: true,
         duplicate: newEvents === 0 && duplicateEvents > 0,

@@ -51,10 +51,10 @@ export function collectEventDescriptors(payload, rawBodyHash) {
   const seen = new Set()
   const entries = Array.isArray(payload?.entry) ? payload.entry : []
 
-  const push = (kind, key) => {
+  const push = (kind, key, externalId = null) => {
     if (!key || seen.has(key)) return
     seen.add(key)
-    descriptors.push({ kind, key })
+    descriptors.push({ kind, key, externalId })
   }
 
   for (const entry of entries) {
@@ -63,12 +63,12 @@ export function collectEventDescriptors(payload, rawBodyHash) {
       const value = change?.value || {}
       for (const message of Array.isArray(value?.messages) ? value.messages : []) {
         const id = String(message?.id || '').trim()
-        if (id) push('message', `message:${id}`)
+        if (id) push('message', `message:${id}`, id)
       }
       for (const status of Array.isArray(value?.statuses) ? value.statuses : []) {
         const id = String(status?.id || '').trim()
         const state = String(status?.status || '').trim().toLowerCase()
-        if (id) push('status', `status:${id}:${state || 'unknown'}`)
+        if (id) push('status', `status:${id}:${state || 'unknown'}`, id)
       }
     }
   }

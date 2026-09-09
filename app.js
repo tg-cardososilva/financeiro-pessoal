@@ -1,8 +1,8 @@
-import { buildAttentionItems, attentionSummary, ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=3.5.0'
-import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=3.5.0'
-import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=3.5.0'
-import { fileList, fileSync, fileLinkProject, fileUnlinkProject, fileStatus, fileJarvisQuery } from './jarvis-files-client.js?v=3.5.0'
-import { FILE_TYPE_LABELS, fileTypeLabel, fileIcon, fileSizeLabel, matchesFileFilters } from './files-ui.js?v=3.5.0'
+import { ATTENTION_URGENCY_LABELS } from './attention-rules.js?v=1.0.0-rc.1'
+import { domainList, domainCreate, domainUpdate, domainDelete, domainTransition } from './jarvis-domain-client.js?v=1.0.0-rc.1'
+import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, NOTE_TYPE_LABELS, PROJECT_STATUS_LABELS, SOURCE_LABELS, filterTasks, filterNotes, filterProjects, collectNoteTags } from './domain-ui.js?v=1.0.0-rc.1'
+import { fileList, fileSync, fileLinkProject, fileUnlinkProject, fileStatus } from './jarvis-files-client.js?v=1.0.0-rc.1'
+import { FILE_TYPE_LABELS, fileTypeLabel, fileIcon, fileSizeLabel, matchesFileFilters } from './files-ui.js?v=1.0.0-rc.1'
 
 const SUPABASE_URL = 'https://qhpkraqrcvhhtbqjhkmm.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_OXgobfJOCgDy4OP2n_zKgg_tOvEa28F'
@@ -65,10 +65,11 @@ const state = {
   investmentSnapshots: [],
   transactionDrilldown: null,
   investmentMovementFilter: 'all',
-  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], counts: { annotations: 0, notes: 0, tasks: 0, projects: 0, actions: 0 }, loading: false, loaded: false, engine: null, error: null },
+  jarvis: { messages: [], annotations: [], notes: [], tasks: [], projects: [], actions: [], connections: [], counts: { annotations: 0, notes: 0, tasks: 0, projects: 0, actions: 0 }, loading: false, loaded: false, engine: null, error: null, whatsapp: { loaded: false, loading: false, paired: false, identity: null, pairing: null } },
   calendar: { events: [], loading: false, loaded: false, error: null, connected: null, syncedAt: null, displayName: null },
   files: { items: [], count: 0, loading: false, loaded: false, error: null, integrationError: null, connected: null, displayName: null, truncated: false, filters: { q: '', type: 'all', project: 'all' } },
-  attention: { reviewTransactions: [], loading: false, loaded: false, error: null },
+  attention: { items: [], summary: '', loading: false, loaded: false, error: null },
+  health: { checks: [], loading: false, loaded: false, error: null },
   domainUi: {
     task: { q: '', status: 'open', priority: 'all', due: 'all', project: 'all' },
     note: { q: '', type: 'all', tag: 'all', project: 'all' },
@@ -78,6 +79,19 @@ const state = {
 
 function esc(v = '') {
   return String(v).replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]))
+}
+function safeMessageHtml(value = '') {
+  return String(value).split(/(https:\/\/[^\s<>]+)/g).map((part) => {
+    if (!part.startsWith('https://')) return esc(part).replace(/\n/g, '<br>')
+    const match = part.match(/^(.*?)([),.;!?]*)$/)
+    const url = match?.[1] || part
+    const suffix = match?.[2] || ''
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol !== 'https:') return esc(part)
+      return `<a href="${esc(parsed.href)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>${esc(suffix)}`
+    } catch (_) { return esc(part) }
+  }).join('')
 }
 function monthKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
 function parseDate(s) { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d) }
@@ -177,6 +191,11 @@ function humanError(err) {
   if (/invalid_transactions/i.test(msg)) return 'Selecione apenas despesas ainda não agrupadas.'
   if (/purchase_not_found/i.test(msg)) return 'Não foi possível localizar essa compra.'
   if (/duplicate key/i.test(msg)) return 'Esse registro já existe.'
+  if (/task_target_ambiguous/i.test(msg)) return 'Encontrei mais de uma tarefa parecida. Use um título mais específico.'
+  if (/task_not_found/i.test(msg)) return 'Não encontrei essa tarefa.'
+  if (/calendar_details_missing/i.test(msg)) return 'Preciso de título, data e horário para preparar o compromisso.'
+  if (/google_drive_not_connected/i.test(msg)) return 'Conecte o Google Drive para criar o arquivo.'
+  if (/openai_not_configured|openai_http/i.test(msg)) return 'A inteligência do Jarvis está temporariamente indisponível.'
   return msg
 }
 
@@ -378,7 +397,8 @@ function navigate(view) {
     purchases: ['Compras', 'FINANÇAS'],
     investments: ['Investimentos', 'FINANÇAS'],
     import: ['Importar extratos', 'FINANÇAS'],
-    accounts: ['Contas', 'FINANÇAS']
+    accounts: ['Contas', 'FINANÇAS'],
+    health: ['Saúde do sistema', 'DIAGNÓSTICO TÉCNICO']
   }[view] || ['Jarvis', 'AMBIENTE PESSOAL']
   $('pageTitle').textContent = meta[0]
   $('pageEyebrow').textContent = meta[1]
@@ -386,6 +406,7 @@ function navigate(view) {
   setHidden($('personalTopActions'), financeViews.includes(view))
   setHidden($('jarvisDockBtn'), ['home','jarvis'].includes(view))
   toggleSidebar(false)
+  if (view === 'health' && !state.health.loaded) loadHealthData()
   renderMain()
 }
 
@@ -458,18 +479,15 @@ async function loadAttentionData(force = false) {
   state.attention.error = null
   if (state.view === 'home') renderMain()
   try {
-    const { data, error } = await supabase.from('transactions')
-      .select('id,transaction_date,display_description,description,merchant,amount,review_status,created_at')
-      .eq('user_id', state.session.user.id)
-      .eq('review_status', 'needs_review')
-      .order('transaction_date', { ascending: true })
-      .order('created_at', { ascending: true })
-      .limit(500)
+    const { data, error } = await supabase.functions.invoke('jarvis-attention', { body: {} })
     if (error) throw error
-    state.attention.reviewTransactions = data || []
+    if (data?.error) throw new Error(data.error)
+    state.attention.items = data?.items || []
+    state.attention.summary = data?.summary || ''
     state.attention.loaded = true
   } catch (err) {
-    state.attention.reviewTransactions = []
+    state.attention.items = []
+    state.attention.summary = ''
     state.attention.error = humanError(err)
     state.attention.loaded = true
   } finally {
@@ -483,7 +501,7 @@ function updateUserChrome() {
   const name = personalDisplayName()
   $('userName').textContent = name
   $('userAvatar').textContent = name[0]?.toUpperCase() || 'U'
-  const review = state.transactions.filter((t) => t.review_status === 'needs_review').length
+  const review = state.transactions.filter((t) => ['auto','needs_review'].includes(t.review_status)).length
   ;['reviewBadge', 'financeReviewBadge'].forEach((id) => {
     const badge = $(id)
     if (!badge) return
@@ -518,6 +536,7 @@ function renderMain() {
   if (state.view === 'import') renderImport()
   if (state.view === 'accounts') renderAccounts()
   if (state.view === 'jarvis') renderJarvis()
+  if (state.view === 'health') renderHealth()
 }
 
 function calcTotals(tx) {
@@ -2408,7 +2427,9 @@ async function executeJarvisCalendarAction(actionId) {
   const btn = document.querySelector(`[data-jarvis-calendar-action="${actionId}"]`)
   setBusy(btn, true, 'Agendando')
   try {
-    const { data, error } = await supabase.functions.invoke('jarvis-calendar', { body: { action_id: actionId } })
+    const { data, error } = await supabase.functions.invoke('jarvis-calendar', {
+      body: { action_id: actionId, explicit_confirmation: true }
+    })
     if (error) throw error
     if (data?.error) throw new Error(data.error)
     toast('Evento criado no Google Calendar.', 'success')
@@ -2419,42 +2440,37 @@ async function executeJarvisCalendarAction(actionId) {
   }
 }
 
-async function testJarvisWhatsApp() {
-  const btn = $('jarvisWhatsAppTest')
-  const numberInput = $('jarvisWhatsAppNumber')
-  const resultBox = $('jarvisWhatsAppResult')
-  const to = String(numberInput?.value || '').replace(/\D/g, '')
-  if (!to) {
-    if (resultBox) { resultBox.className = 'form-message error'; resultBox.textContent = 'Digite o numero com DDI e DDD. Ex.: 5521999999999.' }
-    numberInput?.focus()
-    return
-  }
-  localStorage.setItem('jarvis_whatsapp_test_number', to)
-  if (resultBox) { resultBox.className = 'form-message hidden'; resultBox.textContent = '' }
-  setBusy(btn, true, 'Enviando')
+async function loadWhatsAppIdentity() {
+  if (!state.session || state.jarvis.whatsapp.loading || state.jarvis.whatsapp.loaded) return
+  state.jarvis.whatsapp.loading = true
   try {
-    const { data, error } = await supabase.functions.invoke('jarvis-whatsapp-send', {
-      body: { to, use_template: true }
-    })
-    if (error) {
-      let details = null
-      try { details = await error.context?.json?.() } catch (_) {}
-      if (details) throw new Error([details.error, details.error_code ? `codigo ${details.error_code}` : '', details.error_subcode ? `subcodigo ${details.error_subcode}` : ''].filter(Boolean).join(' · '))
-      throw error
-    }
-    if (data?.error || data?.ok === false) throw new Error([data?.error || 'Falha no envio', data?.error_code ? `codigo ${data.error_code}` : '', data?.error_subcode ? `subcodigo ${data.error_subcode}` : ''].filter(Boolean).join(' · '))
-    const messageId = data?.result?.messages?.[0]?.id || null
-    if (resultBox) {
-      resultBox.className = 'form-message success'
-      resultBox.textContent = messageId ? `Meta aceitou o envio. Message ID: ${messageId}` : 'Meta aceitou o envio do teste.'
-    }
-    toast('Teste enviado diretamente pela WhatsApp Cloud API.', 'success')
-  } catch (err) {
-    const msg = humanError(err)
-    if (resultBox) { resultBox.className = 'form-message error'; resultBox.textContent = msg }
-    toast(msg, 'error')
+    const { data, error } = await supabase.functions.invoke('jarvis-whatsapp-identity', { body: { action: 'status' } })
+    if (error) throw error
+    state.jarvis.whatsapp.paired = Boolean(data?.paired)
+    state.jarvis.whatsapp.identity = data?.identity || null
+    state.jarvis.whatsapp.loaded = true
+  } catch (_) {
+    state.jarvis.whatsapp.loaded = true
   } finally {
-    setBusy(btn, false)
+    state.jarvis.whatsapp.loading = false
+    if (state.view === 'jarvis') renderJarvis()
+  }
+}
+
+async function startWhatsAppPairing() {
+  const button = $('jarvisWhatsAppPair')
+  setBusy(button, true, 'Gerando')
+  try {
+    const { data, error } = await supabase.functions.invoke('jarvis-whatsapp-identity', {
+      body: { action: 'start', explicit: true }
+    })
+    if (error) throw error
+    if (data?.error) throw new Error(data.error)
+    state.jarvis.whatsapp.pairing = data
+    renderJarvis()
+  } catch (err) {
+    toast(humanError(err), 'error')
+    setBusy(button, false)
   }
 }
 
@@ -2528,38 +2544,15 @@ function setJarvisVisualState(next = 'idle', holdMs = 0) {
 
 const JARVIS_TIMEZONE = 'America/Sao_Paulo'
 
-function normalizeJarvisText(value = '') {
-  return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-}
-
-function shouldUseFileRead(message = '') {
-  const text = normalizeJarvisText(message)
-  const writeIntent = /\b(crie|criar|envie|enviar|suba|subir|upload|edite|editar|apague|apagar|delete|exclua|excluir|mova|mover)\b/.test(text)
-  if (writeIntent) return false
-  const fileNoun = /\b(arquivo|arquivos|drive|pdf|documento|documentos|planilha|planilhas|apresentacao|apresentacoes)\b/.test(text)
-  const queryIntent = /\b(encontre|encontrar|ache|achar|procure|procurar|mostre|mostrar|qual|quais|onde|tenho|ligado|ligados|ligada|ligadas|projeto|sobre)\b/.test(text)
-  return fileNoun && queryIntent
-}
-
-function shouldUseCalendarRead(message = '') {
-  const text = normalizeJarvisText(message)
-  const writeIntent = /\b(agende|agendar|marque|marcar|crie|criar|adicione|adicionar|cancele|cancelar|remarque|remarcar|mude|mudar|altere|alterar|apague|apagar|remova|remover)\b/.test(text)
-    || /^(jarvis[,:]?\s+)?agenda\s+(uma|um|a|o|reuniao|evento|consulta|compromisso)\b/.test(text)
-  if (writeIntent) return false
-  return /\b(calendario|compromisso|compromissos|reuniao|reunioes|evento|eventos|agenda)\b/.test(text)
-    || /\bo que (eu )?tenho (hoje|amanha)\b/.test(text)
-    || /\btenho (algo|algum compromisso|alguma reuniao) (hoje|amanha)\b/.test(text)
-}
-
 async function invokeJarvisEngine(message, source = 'panel_jarvis') {
-  if (shouldUseFileRead(message)) {
-    try {
-      const data = await fileJarvisQuery(supabase, message)
-      return { data, error: null }
-    } catch (error) { return { data: null, error } }
-  }
-  const functionName = shouldUseCalendarRead(message) ? 'jarvis-calendar-query' : 'jarvis-core'
-  return supabase.functions.invoke(functionName, { body: { message, channel: 'web', source } })
+  return supabase.functions.invoke('jarvis-core', {
+    body: {
+      message,
+      channel: 'web',
+      source,
+      external_message_id: `web:${crypto.randomUUID()}`,
+    }
+  })
 }
 
 async function sendJarvisQuick(message, button = null) {
@@ -2725,22 +2718,12 @@ function renderHome() {
   const activeProjects = allActiveProjects.slice(0,3)
   const tx = visibleTransactions()
   const totals = calcTotals(tx)
-  const reviewCount = state.transactions.filter((t) => t.review_status === 'needs_review').length
+  const reviewCount = state.transactions.filter((t) => ['auto','needs_review'].includes(t.review_status)).length
   const cashBalance = state.accounts.filter((a) => !['credit_card','virtual'].includes(a.account_type)).reduce((sum,a) => sum + (accountBalanceLabel(a).value || 0), 0)
   const google = jarvisGoogleConnection()
   const drive = jarvisDriveConnection()
-  const attentionItems = buildAttentionItems({
-    tasks: state.jarvis.tasks,
-    actions: state.jarvis.actions,
-    reviewTransactions: state.attention.reviewTransactions,
-    annotations: state.jarvis.annotations,
-    calendarEvents: state.calendar.events,
-    connections: state.jarvis.connections,
-    calendarError: state.calendar.error,
-    now,
-    timezone: JARVIS_TIMEZONE,
-  })
-  const focusSummary = attentionSummary(attentionItems)
+  const attentionItems = state.attention.items || []
+  const focusSummary = state.attention.summary || 'Consolidando seu ambiente pessoal.'
   const attentionBody = state.attention.loading && !state.attention.loaded
     ? '<div class="attention-empty"><span class="spinner"></span><p><strong>Consolidando sinais reais...</strong><small>Verificando pendências financeiras.</small></p></div>'
     : attentionItems.length
@@ -3194,6 +3177,7 @@ function renderProjects() {
 }
 
 function renderJarvis() {
+  if (!state.jarvis.whatsapp.loaded && !state.jarvis.whatsapp.loading) loadWhatsAppIdentity()
   if (!state.files.loaded && !state.files.loading) loadFilesData()
   if (!state.jarvis.loaded && !state.jarvis.loading) {
     $('mainArea').innerHTML = `<div class="content-stack">${personalLoading()}<div class="skeleton-block h340"></div></div>`
@@ -3205,6 +3189,7 @@ function renderJarvis() {
   const cards = jarvisCreatedSummary()
   const google = jarvisGoogleConnection()
   const drive = jarvisDriveConnection()
+  const whatsapp = state.jarvis.whatsapp
   const calendarActions = state.jarvis.actions.filter((x) => x.action_type === 'calendar_create' && ['proposed','failed'].includes(x.status))
   const pendingActions = state.jarvis.actions.filter((x) => x.status === 'proposed').length
   const loadError = state.jarvis.error ? `<div class="error-banner jarvis-load-error" role="alert"><span>${esc(state.jarvis.error)}</span><button id="jarvisRetryLoad" type="button">Tentar novamente</button></div>` : ''
@@ -3218,7 +3203,7 @@ function renderJarvis() {
       <div class="panel jarvis-chat-panel">
         <div class="panel-head"><div><h2>Conversa</h2><p>Pergunte sobre seu painel ou peça uma ação. O mesmo cérebro será usado no WhatsApp.</p></div><button id="jarvisRefresh" class="button small" type="button">Atualizar</button></div>
         <div id="jarvisChat" class="jarvis-chat" aria-live="polite">
-          ${messages.length ? messages.map((m) => `<div class="jarvis-message ${m.direction === 'inbound' ? 'user' : 'assistant'}"><div class="jarvis-bubble"><span>${esc(m.body || m.transcript || '')}</span>${m.direction === 'outbound' ? `<small>${esc(jarvisIntentLabel(m.intent))}</small>` : ''}</div></div>`).join('') : `<div class="jarvis-empty"><strong>Comece por qualquer assunto.</strong><span>Ex.: “O que tenho amanhã?”, “Quanto gastei este mês?” ou “Anota essa ideia...”.</span></div>`}
+          ${messages.length ? messages.map((m) => `<div class="jarvis-message ${m.direction === 'inbound' ? 'user' : 'assistant'}"><div class="jarvis-bubble"><span>${safeMessageHtml(m.body || m.transcript || '')}</span>${m.direction === 'outbound' ? `<small>${esc(jarvisIntentLabel(m.intent))}</small>` : ''}</div></div>`).join('') : `<div class="jarvis-empty"><strong>Comece por qualquer assunto.</strong><span>Ex.: “O que tenho amanhã?”, “Quanto gastei este mês?” ou “Anota essa ideia...”.</span></div>`}
         </div>
         <div class="jarvis-quick-prompts">
           <button type="button" data-jarvis-prompt="Jarvis, o que eu tenho pendente hoje?">Meu dia</button>
@@ -3241,7 +3226,7 @@ function renderJarvis() {
         <section class="panel jarvis-integrations-compact">
           <div class="panel-head"><div><h2>Integrações</h2><p>Um assistente, vários canais e serviços.</p></div></div>
           <div class="compact-integration ${google ? 'connected' : ''}"><span>31</span><div><strong>Google Calendar</strong><small>${google ? esc(google.display_name || 'Conectado') : 'Não conectado'}</small></div>${google ? '<b>✓</b>' : '<button id="jarvisGoogleConnect" class="button small" type="button">Conectar</button>'}</div>
-          <div class="compact-integration configuring"><span>WA</span><div><strong>WhatsApp</strong><small>Número dedicado aguardando ativação</small></div><b>…</b></div>
+          <div class="compact-integration ${whatsapp.paired ? 'connected' : 'configuring'}"><span>WA</span><div><strong>WhatsApp</strong><small>${whatsapp.paired ? 'Identidade vinculada com segurança' : whatsapp.pairing ? `Código ${esc(whatsapp.pairing.code)} · expira em 15 min` : 'Aguardando vínculo seguro'}</small>${whatsapp.pairing ? `<em>${esc(whatsapp.pairing.instruction)}</em>` : ''}</div>${whatsapp.paired ? '<b>✓</b>' : `<button id="jarvisWhatsAppPair" class="button small" type="button">${whatsapp.pairing ? 'Gerar outro' : 'Gerar código'}</button>`}</div>
           <div class="compact-integration ${drive ? 'connected' : 'future'}"><span>D</span><div><strong>Google Drive</strong><small>${drive ? `${state.files.count} metadados sincronizados` : 'Não conectado'}</small></div><b>${drive ? '✓' : '○'}</b></div>
         </section>
         <section class="panel"><div class="panel-head"><div><h2>Memória estruturada</h2><p>O que já existe por trás da conversa.</p></div></div><div class="jarvis-metric-list">${cards.map(([label,value,sub]) => `<div><span>${esc(label)}</span><strong>${value}</strong><small>${esc(sub)}</small></div>`).join('')}</div></section>
@@ -3252,6 +3237,7 @@ function renderJarvis() {
   $('jarvisRetryLoad')?.addEventListener('click', () => { state.jarvis.loaded = false; state.jarvis.error = null; loadJarvisData(true) })
   $('jarvisRefresh')?.addEventListener('click', () => Promise.all([loadJarvisData(true), loadFilesData(true)]))
   $('jarvisGoogleConnect')?.addEventListener('click', connectJarvisGoogleCalendar)
+  $('jarvisWhatsAppPair')?.addEventListener('click', startWhatsAppPairing)
   document.querySelectorAll('[data-jarvis-calendar-action]').forEach((b) => b.addEventListener('click', () => executeJarvisCalendarAction(b.dataset.jarvisCalendarAction)))
   document.querySelectorAll('[data-jarvis-prompt]').forEach((b) => b.addEventListener('click', () => { $('jarvisInput').value = b.dataset.jarvisPrompt; $('jarvisInput').focus() }))
   $('jarvisForm')?.addEventListener('submit', sendJarvisMessage)
@@ -3259,6 +3245,69 @@ function renderJarvis() {
   $('jarvisInput')?.addEventListener('input', () => setJarvisVisualState('listening'))
   $('jarvisInput')?.addEventListener('blur', () => { if (!$('jarvisInput')?.value.trim()) setJarvisVisualState(pendingActions ? 'attention' : 'idle') })
   requestAnimationFrame(() => { const chat = $('jarvisChat'); if (chat) chat.scrollTop = chat.scrollHeight; setJarvisVisualState(pendingActions ? 'attention' : 'idle') })
+}
+
+const HEALTH_LABELS = {
+  supabase: 'Supabase',
+  openai: 'OpenAI',
+  google_calendar: 'Google Calendar',
+  google_drive: 'Google Drive',
+  document_ai: 'Document AI',
+  cloud_run: 'Cloud Run',
+  whatsapp_webhook: 'Webhook WhatsApp',
+  whatsapp_sender: 'Envio WhatsApp',
+}
+
+async function loadHealthData(refresh = false) {
+  if (!state.session || state.health.loading) return
+  state.health.loading = true
+  state.health.error = null
+  if (state.view === 'health') renderMain()
+  try {
+    const { data, error } = await supabase.functions.invoke('jarvis-health', {
+      body: { action: refresh ? 'check' : 'status' }
+    })
+    if (error) throw error
+    if (data?.error) throw new Error(data.error)
+    state.health.checks = data?.checks || []
+    if (!refresh && !state.health.checks.length) {
+      state.health.loading = false
+      return loadHealthData(true)
+    }
+    state.health.loaded = true
+  } catch (err) {
+    state.health.error = humanError(err)
+    state.health.loaded = true
+  } finally {
+    state.health.loading = false
+    if (state.view === 'health') renderMain()
+  }
+}
+
+function renderHealth() {
+  const checks = state.health.checks || []
+  const actionCount = checks.filter((entry) => entry.action_required).length
+  $('mainArea').innerHTML = `<div class="content-stack health-section">
+    <section class="panel health-head">
+      <div><span class="eyebrow">OBSERVABILIDADE</span><h2>Saúde do Jarvis</h2><p>Diagnóstico discreto das integrações e serviços. Nenhum secret ou conteúdo pessoal é exibido.</p></div>
+      <button id="healthRefresh" class="button primary" type="button">${state.health.loading ? '<span class="spinner"></span> Verificando' : 'Executar verificação'}</button>
+    </section>
+    ${state.health.error ? `<div class="form-message error">${esc(state.health.error)}</div>` : ''}
+    <section class="health-summary">
+      <article><span>Serviços</span><strong>${checks.length}</strong></article>
+      <article><span>Exigem ação</span><strong>${actionCount}</strong></article>
+      <article><span>Última verificação</span><strong>${checks[0]?.checked_at ? esc(jarvisDateTime(checks[0].checked_at)) : 'Ainda não executada'}</strong></article>
+    </section>
+    <section class="health-grid">
+      ${checks.length ? checks.map((entry) => `<article class="health-card status-${esc(entry.status)}">
+        <div><span class="health-dot"></span><strong>${esc(HEALTH_LABELS[entry.component] || entry.component)}</strong></div>
+        <b>${esc(entry.status === 'healthy' ? 'Saudável' : entry.status === 'blocked' ? 'Bloqueado' : entry.status === 'degraded' ? 'Degradado' : 'Desconhecido')}</b>
+        <p>${esc(entry.message)}</p>
+        <small>${esc(entry.code)} · ${entry.checked_at ? esc(jarvisDateTime(entry.checked_at)) : 'sem leitura'}</small>
+      </article>`).join('') : `<div class="personal-empty"><span>${state.health.loading ? 'Verificando serviços...' : 'Execute a primeira verificação de saúde.'}</span></div>`}
+    </section>
+  </div>`
+  $('healthRefresh')?.addEventListener('click', () => loadHealthData(true))
 }
 
 async function sendJarvisMessage(e) {
