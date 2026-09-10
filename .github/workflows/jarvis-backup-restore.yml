@@ -1,0 +1,104 @@
+name: Jarvis encrypted backup and restore test
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Digite BACKUP para executar o dump real e o restore isolado'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jarvis-production-backup
+  cancel-in-progress: false
+
+jobs:
+  backup_restore:
+    name: PostgreSQL 17 encrypted backup gate
+    if: github.event.inputs.confirmation == 'BACKUP'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: jarvis-production-backup
+    container:
+      image: postgres:17-bookworm
+    services:
+      restore_db:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_PASSWORD: jarvis_restore_ephemeral
+          POSTGRES_DB: jarvis_restore
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jarvis_restore"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install age
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends age ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Prepare protected inputs
+        shell: bash
+        env:
+          DB_URL_SECRET: ${{ secrets.SUPABASE_DB_URL }}
+          AGE_IDENTITY_SECRET: ${{ secrets.BACKUP_AGE_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DB_URL_SECRET" || -z "$AGE_IDENTITY_SECRET" ]]; then
+            echo 'Secrets SUPABASE_DB_URL e BACKUP_AGE_IDENTITY sao obrigatorios.' >&2
+            exit 2
+          fi
+          umask 077
+          identity_path="$RUNNER_TEMP/jarvis-age-identity.txt"
+          printf '%s\n' "$AGE_IDENTITY_SECRET" > "$identity_path"
+          age-keygen -y "$identity_path" >/dev/null
+          {
+            echo "SUPABASE_DB_URL=$DB_URL_SECRET"
+            echo "BACKUP_AGE_IDENTITY=$identity_path"
+            echo "JARVIS_BACKUP_DIR=$RUNNER_TEMP/jarvis-encrypted"
+          } >> "$GITHUB_ENV"
+
+      - name: Dump production read-only and encrypt
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/backup-logical.sh >/dev/null
+          backup_file="$(find "$JARVIS_BACKUP_DIR" -maxdepth 1 -type f -name 'jarvis-*.tar.age' -print -quit)"
+          test -n "$backup_file"
+          test -s "$backup_file"
+          test -s "$backup_file.sha256"
+          echo "JARVIS_BACKUP_FILE=$backup_file" >> "$GITHUB_ENV"
+
+      - name: Decrypt and restore into disposable PostgreSQL 17
+        shell: bash
+        env:
+          JARVIS_RESTORE_DB_URL: postgresql://postgres:jarvis_restore_ephemeral@restore_db:5432/jarvis_restore
+        run: |
+          set -euo pipefail
+          bash scripts/restore-test.sh
+
+      - name: Upload encrypted recovery artifact only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jarvis-encrypted-backup-${{ github.run_id }}
+          path: |
+            ${{ env.JARVIS_BACKUP_FILE }}
+            ${{ env.JARVIS_BACKUP_FILE }}.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Remove plaintext and key material
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- "$RUNNER_TEMP/jarvis-age-identity.txt"

@@ -5,6 +5,9 @@ test -f supabase/config.toml
 test -f .env.example
 test -f docs/operations-runbook.md
 test -f docs/backup-recovery.md
+test -f .github/workflows/jarvis-backup-restore.yml
+test -f scripts/backup-logical.sh
+test -f scripts/restore-test.sh
 test -f manifest.webmanifest
 test -f sw.js
 
@@ -17,4 +20,3 @@ done
 ! grep -R -E 'sb_secret_[A-Za-z0-9_-]{20,}|EAA[A-Za-z0-9]{40,}|BEGIN (RSA |EC |)PRIVATE KEY' \
   --exclude-dir=.git --exclude='*.png' .
 printf 'repository_reconstruction_ok migrations=%s\n' "$repo_migrations"
-
